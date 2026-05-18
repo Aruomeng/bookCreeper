@@ -84,8 +84,16 @@ class CrawlStats:
     books_saved: int = 0
 
 
+@dataclass(frozen=True)
+class DetailItem:
+    url: str
+    title: str = ""
+
+
 def normalize_space(text: str) -> str:
-    return re.sub(r"\s+", " ", text or "").strip()
+    text = (text or "").replace("\xa0", " ")
+    text = re.sub(r"&nbsp;?", " ", text, flags=re.I)
+    return re.sub(r"\s+", " ", text).strip()
 
 
 def normalize_label(label: str) -> str:
@@ -129,14 +137,101 @@ def fetch(session: requests.Session, url: str, delay: tuple[float, float]) -> re
     return resp
 
 
-def extract_detail_links(page_html: str, page_url: str) -> list[str]:
+def is_book_detail_url(url: str) -> bool:
+    return bool(re.search(r"(?:/views/specific/\d+/)?bookDetail\.jsp\?", url))
+
+
+def title_is_noise(title: str) -> bool:
+    title = clean_title(title)
+    if not title or len(title) > 140:
+        return True
+    noise_markers = SEARCH_PAGE_MARKERS + [
+        "参考文献与引证文献",
+        "参考文献",
+        "目录试读",
+        "你可能还需要",
+        "推荐图书馆购买",
+        "信息补正",
+        "点击复制",
+        "免责声明",
+    ]
+    return any(marker in title for marker in noise_markers)
+
+
+def search_title_candidate(text: str) -> str:
+    title = clean_title(text)
+    if title_is_noise(title):
+        return ""
+    generic = {
+        "详情",
+        "详细",
+        "试读",
+        "阅读",
+        "在线阅读",
+        "馆藏纸本",
+        "文献传递",
+        "获取",
+        "收藏",
+        "分享",
+        "导出",
+        "封面",
+    }
+    if title in generic or title.startswith(("http://", "https://")):
+        return ""
+    return title
+
+
+def extract_detail_items(page_html: str, page_url: str) -> list[DetailItem]:
     doc = html.fromstring(page_html)
-    links: list[str] = []
-    for href in doc.xpath("//a/@href"):
-        full = urljoin(page_url, href)
-        if re.search(r"(?:/views/specific/\d+/)?bookDetail\.jsp\?", full):
-            links.append(full)
-    return dedupe(links)
+    items: list[DetailItem] = []
+    for anchor in doc.xpath("//a[@href]"):
+        full = urljoin(page_url, anchor.get("href") or "")
+        if not is_book_detail_url(full):
+            continue
+
+        candidates = [anchor.text_content()]
+        for ancestor_xpath in [
+            "./ancestor::li[1]",
+            "./ancestor::tr[1]",
+            "./ancestor::div[contains(@class,'book') or contains(@class,'result') or contains(@class,'list')][1]",
+            "./ancestor::div[1]",
+        ]:
+            for ancestor in anchor.xpath(ancestor_xpath):
+                candidates.extend(node.text_content() for node in ancestor.xpath(".//a[@href]"))
+                candidates.extend(
+                    node.text_content()
+                    for node in ancestor.xpath(
+                        ".//*[contains(@class,'title') or contains(@class,'bookname') "
+                        "or contains(@class,'book-name') or contains(@class,'name')]"
+                    )
+                )
+
+        title = ""
+        for candidate in candidates:
+            title = search_title_candidate(candidate)
+            if title:
+                break
+        if not title:
+            useful_candidates = [search_title_candidate(candidate) for candidate in candidates]
+            useful_candidates = [candidate for candidate in useful_candidates if candidate]
+            if useful_candidates:
+                title = max(useful_candidates, key=len)
+        items.append(DetailItem(full, title))
+    return dedupe_detail_items(items)
+
+
+def extract_detail_links(page_html: str, page_url: str) -> list[str]:
+    return [item.url for item in extract_detail_items(page_html, page_url)]
+
+
+def dedupe_detail_items(items: Iterable[DetailItem]) -> list[DetailItem]:
+    seen: dict[str, DetailItem] = {}
+    for item in items:
+        if item.url not in seen:
+            seen[item.url] = item
+        elif item.title and not seen[item.url].title:
+            seen[item.url] = item
+    return list(seen.values())
 
 
 def dedupe(items: Iterable[str]) -> list[str]:
@@ -161,16 +256,56 @@ def clean_title(title: str) -> str:
     return normalize_space(title)
 
 
-def extract_title(doc: html.HtmlElement, nodes: list[str]) -> str:
-    for xp in ["//h1//text()", "//h2//text()", "//*[contains(@class,'title')]//text()"]:
-        val = clean_title(" ".join(doc.xpath(xp)))
-        if val and len(val) < 150:
-            return val
+def title_from_citation(flat_text: str) -> str:
+    match = re.search(
+        r"参考文献格式\s*[：:]\s*(.*?)(?=\s+(?:获取|免责声明|目录试读|书内插图及表格)\s*[：:]?|$)",
+        flat_text,
+    )
+    if not match:
+        return ""
+    citation = normalize_space(match.group(1))
+    patterns = [
+        r"[.．]\s*(.+?)\s*\[[A-Z]\]",
+        r"[.．]\s*(.+?)[.．]\s*[^.．]{1,30}[：:]",
+    ]
+    for pattern in patterns:
+        title_match = re.search(pattern, citation)
+        if title_match:
+            title = clean_title(title_match.group(1))
+            if not title_is_noise(title):
+                return title
+    return ""
 
-    title = clean_title(" ".join(doc.xpath("//title/text()")))
-    if title and "登录" not in title and len(title) < 150:
+
+def extract_title(doc: html.HtmlElement, nodes: list[str], flat_text: str = "", fallback_title: str = "") -> str:
+    title_xpaths = [
+        "//h1",
+        "//h2",
+        "//*[contains(@class,'book-title') or contains(@class,'book_title')]",
+        "//*[contains(@class,'bookname') or contains(@class,'book-name') or contains(@class,'book_name')]",
+        "//*[contains(@class,'card') and (contains(@class,'title') or contains(@class,'tit'))]",
+        "//*[contains(@class,'detail') and (contains(@class,'title') or contains(@class,'tit'))]",
+    ]
+    for xp in title_xpaths:
+        for node in doc.xpath(xp):
+            val = clean_title(node.text_content())
+            if not title_is_noise(val):
+                return val
+
+    citation_title = title_from_citation(flat_text)
+    if citation_title:
+        return citation_title
+
+    fallback_title = clean_title(fallback_title)
+    if fallback_title and not title_is_noise(fallback_title):
+        return fallback_title
+
+    raw_title = normalize_space(" ".join(doc.xpath("//title/text()")))
+    title = clean_title(raw_title)
+    if title and "登录" not in title and "图书搜索" not in raw_title and not title_is_noise(title):
         return title
-    return clean_title(nodes[0]) if nodes else ""
+
+    return ""
 
 
 def extract_pairs_from_tables(doc: html.HtmlElement) -> dict[str, str]:
@@ -324,6 +459,12 @@ def clean_summary(value: str) -> str:
     return normalize_space(value)
 
 
+def clean_classification(value: str) -> str:
+    value = normalize_space(value)
+    value = re.sub(r"(?<=[A-Za-z0-9.])�+(?=[A-Za-z0-9])", ";", value)
+    return normalize_space(value)
+
+
 def values_from_text_nodes(nodes: list[str]) -> dict[str, str]:
     values: dict[str, str] = {}
     label_to_field: dict[str, str] = {}
@@ -370,7 +511,7 @@ def values_from_text_nodes(nodes: list[str]) -> dict[str, str]:
     return values
 
 
-def parse_book_detail(page_html: str, page_url: str) -> dict[str, str]:
+def parse_book_detail(page_html: str, page_url: str, fallback_title: str = "") -> dict[str, str]:
     doc = html.fromstring(page_html)
     problem = detail_page_problem_from_doc(doc, page_url)
     if problem:
@@ -408,7 +549,7 @@ def parse_book_detail(page_html: str, page_url: str) -> dict[str, str]:
 
     publisher, publish_date = split_publication(extracted.get("出版发行", ""))
     row = {field: "" for field in FIELDS}
-    row["题名"] = extract_title(doc, nodes)
+    row["题名"] = extract_title(doc, nodes, flat_text, fallback_title)
     row["外文题名"] = extracted.get("外文题名", "")
     row["作者"] = extracted.get("作者", "")
     row["出版社"] = publisher
@@ -418,7 +559,7 @@ def parse_book_detail(page_html: str, page_url: str) -> dict[str, str]:
     row["原书定价"] = extracted.get("原书定价", "")
     row["开本"] = extracted.get("开本", "")
     row["主题词"] = extracted.get("主题词", "")
-    row["中图法分类号"] = extracted.get("中图法分类号", "")
+    row["中图法分类号"] = clean_classification(extracted.get("中图法分类号", ""))
     row["内容提要"] = clean_summary(extracted.get("内容提要", ""))
     row["详情页Url"] = page_url
 
@@ -457,7 +598,7 @@ def make_session(args: argparse.Namespace) -> requests.Session:
 def crawl(args: argparse.Namespace) -> tuple[list[dict[str, str]], CrawlStats]:
     session = make_session(args)
     stats = CrawlStats()
-    detail_urls: list[str] = []
+    detail_items: list[DetailItem] = []
 
     for page in range(1, args.pages + 1):
         page_url = args.url if page == 1 else build_page_url(args.url, page)
@@ -471,31 +612,31 @@ def crawl(args: argparse.Namespace) -> tuple[list[dict[str, str]], CrawlStats]:
                 "请求被重定向到登录页。请先在浏览器登录读秀，然后用 --cookie 或 --cookie-file 传入登录 Cookie。"
             )
         stats.pages_seen += 1
-        links = extract_detail_links(page_text, resp.url)
-        stats.detail_urls_seen += len(links)
-        detail_urls.extend(links)
-        print(f"[page {page}] found {len(links)} detail links", file=sys.stderr)
+        items = extract_detail_items(page_text, resp.url)
+        stats.detail_urls_seen += len(items)
+        detail_items.extend(items)
+        print(f"[page {page}] found {len(items)} detail links", file=sys.stderr)
 
-    detail_urls = dedupe(detail_urls)
-    stats.detail_urls_unique = len(detail_urls)
+    detail_items = dedupe_detail_items(detail_items)
+    stats.detail_urls_unique = len(detail_items)
     rows: list[dict[str, str]] = []
 
-    for index, detail_url in enumerate(detail_urls, 1):
-        resp = fetch(session, detail_url, args.delay)
+    for index, item in enumerate(detail_items, 1):
+        resp = fetch(session, item.url, args.delay)
         err = access_error(resp.text, resp.url)
         if err:
             raise RuntimeError(err)
         if looks_like_login(resp.text, resp.url):
-            print(f"[skip] login required for {detail_url}", file=sys.stderr)
+            print(f"[skip] login required for {item.url}", file=sys.stderr)
             continue
         problem = detail_page_problem(resp.text, resp.url)
         if problem:
-            print(f"[skip] {problem}: {detail_url}", file=sys.stderr)
+            print(f"[skip] {problem}: {item.url}", file=sys.stderr)
             continue
-        row = parse_book_detail(resp.text, resp.url)
+        row = parse_book_detail(resp.text, resp.url, fallback_title=item.title)
         rows.append(row)
         stats.books_saved += 1
-        print(f"[detail {index}/{len(detail_urls)}] {row.get('题名') or detail_url}", file=sys.stderr)
+        print(f"[detail {index}/{len(detail_items)}] {row.get('题名') or item.url}", file=sys.stderr)
 
     return rows, stats
 

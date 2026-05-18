@@ -27,7 +27,7 @@ from crawl_duxiu_books import (
     access_error,
     build_page_url,
     detail_page_problem,
-    extract_detail_links,
+    extract_detail_items,
     looks_like_login,
     parse_book_detail,
 )
@@ -336,21 +336,21 @@ class CrawlerService:
             self.metrics.current_item = 0
         self.log("info", f"抓取搜索页 {page}：{page_url}")
         resp = self._request(page_session, page_url, config, page=page, item=0)
-        links = extract_detail_links(resp.text, resp.url)
+        detail_items = extract_detail_items(resp.text, resp.url)
         with self.lock:
-            self.metrics.detail_links_seen += len(links)
+            self.metrics.detail_links_seen += len(detail_items)
             self.state.detail_links_seen = self.metrics.detail_links_seen
-        self.log("info", f"第 {page} 页发现 {len(links)} 条详情链接。")
+        self.log("info", f"第 {page} 页发现 {len(detail_items)} 条详情链接。")
 
-        tasks = [(idx, url) for idx, url in enumerate(links, 1) if url not in self.processed_urls]
+        tasks = [(idx, item.url, item.title) for idx, item in enumerate(detail_items, 1) if item.url not in self.processed_urls]
         if not tasks:
             self._mark_page_completed(page)
             return
 
         with ThreadPoolExecutor(max_workers=max(1, config.workers)) as executor:
             futures = {
-                executor.submit(self._crawl_detail, config, page, idx, url): (idx, url)
-                for idx, url in tasks
+                executor.submit(self._crawl_detail, config, page, idx, url, search_title): (idx, url)
+                for idx, url, search_title in tasks
                 if not self.stop_event.is_set() and not self._target_reached(config)
             }
             while futures:
@@ -381,7 +381,9 @@ class CrawlerService:
         if not self.stop_event.is_set() and not self._target_reached(config):
             self._mark_page_completed(page)
 
-    def _crawl_detail(self, config: CrawlConfig, page: int, item: int, url: str) -> dict[str, str] | None:
+    def _crawl_detail(
+        self, config: CrawlConfig, page: int, item: int, url: str, search_title: str = ""
+    ) -> dict[str, str] | None:
         if self.stop_event.is_set():
             return None
         with self.lock:
@@ -393,7 +395,7 @@ class CrawlerService:
         if problem:
             self._save_debug_html(resp.text, "bad_detail", page, item, config)
             raise RuntimeError(problem)
-        row = parse_book_detail(resp.text, resp.url)
+        row = parse_book_detail(resp.text, resp.url, fallback_title=search_title)
         return row
 
     def _request(self, session: requests.Session, url: str, config: CrawlConfig, page: int, item: int) -> requests.Response:
