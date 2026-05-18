@@ -146,6 +146,9 @@ def title_is_noise(title: str) -> bool:
     if not title or len(title) > 140:
         return True
     noise_markers = SEARCH_PAGE_MARKERS + [
+        "可检索字段",
+        "专业检索规则",
+        "图书示例",
         "参考文献与引证文献",
         "参考文献",
         "目录试读",
@@ -279,12 +282,11 @@ def title_from_citation(flat_text: str) -> str:
 
 def extract_title(doc: html.HtmlElement, nodes: list[str], flat_text: str = "", fallback_title: str = "") -> str:
     title_xpaths = [
+        "//dl[.//dd]//dt[1]",
         "//h1",
         "//h2",
         "//*[contains(@class,'book-title') or contains(@class,'book_title')]",
         "//*[contains(@class,'bookname') or contains(@class,'book-name') or contains(@class,'book_name')]",
-        "//*[contains(@class,'card') and (contains(@class,'title') or contains(@class,'tit'))]",
-        "//*[contains(@class,'detail') and (contains(@class,'title') or contains(@class,'tit'))]",
     ]
     for xp in title_xpaths:
         for node in doc.xpath(xp):
