@@ -145,6 +145,8 @@ def title_is_noise(title: str) -> bool:
     title = clean_title(title)
     if not title or len(title) > 140:
         return True
+    if normalize_label(title) in {"书名", "题名", "外文题名", "中文图书"}:
+        return True
     noise_markers = SEARCH_PAGE_MARKERS + [
         "可检索字段",
         "专业检索规则",
@@ -253,9 +255,14 @@ def text_nodes(doc: html.HtmlElement) -> list[str]:
 
 def clean_title(title: str) -> str:
     title = normalize_space(title)
+    label_match = re.match(r"^(?:书名|题名)\s*[：:]\s*(.+)$", title)
+    if label_match:
+        title = label_match.group(1)
+    title = title.strip("《》")
     title = re.sub(r"[-_｜|]?\s*读秀.*$", "", title).strip()
     title = re.sub(r"[-_｜|]?\s*图书搜索\s*$", "", title).strip()
     title = re.sub(r"[-_｜|]?\s*中文图书搜索\s*$", "", title).strip()
+    title = title.strip("《》")
     return normalize_space(title)
 
 
