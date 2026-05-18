@@ -341,18 +341,28 @@ class CrawlerService:
             self.metrics.detail_links_seen += len(detail_items)
             self.state.detail_links_seen = self.metrics.detail_links_seen
         self.log("info", f"第 {page} 页发现 {len(detail_items)} 条详情链接。")
+        if len(detail_items) < 15:
+            self.log("warn", f"第 {page} 页少于常规 15 条，请留意搜索结果页是否已到末页或被站点限制。")
 
         tasks = [(idx, item.url, item.title) for idx, item in enumerate(detail_items, 1) if item.url not in self.processed_urls]
+        skipped_existing = len(detail_items) - len(tasks)
+        if skipped_existing:
+            self.log("info", f"第 {page} 页有 {skipped_existing} 条已存在于断点记录，本次不重复抓取。")
+        self.log("info", f"第 {page} 页本次提交 {len(tasks)} 条详情任务。")
         if not tasks:
             self._mark_page_completed(page)
             return
 
+        page_saved = 0
+        page_failed = 0
+        page_skipped = 0
         with ThreadPoolExecutor(max_workers=max(1, config.workers)) as executor:
             futures = {
                 executor.submit(self._crawl_detail, config, page, idx, url, search_title): (idx, url)
                 for idx, url, search_title in tasks
                 if not self.stop_event.is_set() and not self._target_reached(config)
             }
+            blocked_error: CrawlBlocked | None = None
             while futures:
                 done, _ = wait(futures, timeout=0.5, return_when=FIRST_COMPLETED)
                 with self.lock:
@@ -365,19 +375,43 @@ class CrawlerService:
                     idx, url = futures.pop(future)
                     try:
                         row = future.result()
-                    except CrawlBlocked:
-                        raise
+                    except CrawlBlocked as exc:
+                        blocked_error = exc
+                        self.stop_event.set()
+                        continue
                     except Exception as exc:
+                        page_failed += 1
                         self._record_failure(page, idx, url, str(exc))
                         continue
                     if row:
-                        self._save_row(row, page, idx, url, config)
+                        if self._save_row(row, page, idx, url, config):
+                            page_saved += 1
+                        else:
+                            page_skipped += 1
                     if self._target_reached(config):
                         self.stop_event.set()
                         break
+                if blocked_error:
+                    for future in futures:
+                        future.cancel()
+                    raise blocked_error
 
         with self.lock:
             self.metrics.in_flight = 0
+        self.log(
+            "info",
+            f"第 {page} 页汇总：发现 {len(detail_items)} 条，断点跳过 {skipped_existing} 条，"
+            f"本次保存 {page_saved} 条，运行中重复跳过 {page_skipped} 条，失败 {page_failed} 条。",
+        )
+        if page_failed and not self.stop_event.is_set() and not self._target_reached(config):
+            reason = f"第 {page} 页有 {page_failed} 条详情失败，已停在本页；修复后从断点继续，避免漏抓。"
+            with self.lock:
+                self.metrics.stop_reason = reason
+                self.state.stop_reason = reason
+                self.state.last_page = page
+            self.log("warn", reason)
+            self.stop_event.set()
+            self._save_state()
         if not self.stop_event.is_set() and not self._target_reached(config):
             self._mark_page_completed(page)
 
@@ -406,7 +440,6 @@ class CrawlerService:
             time.sleep(random.uniform(config.min_delay, config.max_delay))
             try:
                 resp = session.get(url, timeout=35)
-                resp.raise_for_status()
                 if not resp.encoding or resp.encoding.lower() == "iso-8859-1":
                     resp.encoding = resp.apparent_encoding
                 block_reason = self._detect_block(resp.text, resp.url)
@@ -420,6 +453,7 @@ class CrawlerService:
                         self.state.last_url = url
                     self._save_block_html(resp.text, page, item, config)
                     raise CrawlBlocked(f"{block_reason}；停止在第 {page} 页第 {item} 条。")
+                resp.raise_for_status()
                 return resp
             except CrawlBlocked:
                 raise
@@ -436,6 +470,8 @@ class CrawlerService:
         err = access_error(text, final_url)
         if err:
             return err
+        if "antispider" in final_url.lower():
+            return "遇到验证/风控页面：antispider"
         if looks_like_login(text, final_url):
             return "登录态失效或被重定向到登录页"
         block_words = [
@@ -466,11 +502,11 @@ class CrawlerService:
         except OSError as exc:
             self.log("warn", f"保存调试 HTML 失败：{exc}")
 
-    def _save_row(self, row: dict[str, str], page: int, item: int, url: str, config: CrawlConfig) -> None:
+    def _save_row(self, row: dict[str, str], page: int, item: int, url: str, config: CrawlConfig) -> bool:
         with self.lock:
             if url in self.processed_urls:
                 self.metrics.skipped_count += 1
-                return
+                return False
             self.processed_urls.add(url)
             self.rows.append(row)
             self.recent_rows.append(row)
@@ -492,10 +528,17 @@ class CrawlerService:
             if self.metrics.books_saved - self.last_json_flush >= max(1, config.flush_every):
                 self._flush_json_locked()
             self._save_state_locked()
+            return True
 
     def _record_failure(self, page: int, item: int, url: str, error: str) -> None:
         with self.lock:
             self.metrics.failed_count += 1
+            self.metrics.last_page = page
+            self.metrics.last_item = item
+            self.metrics.last_url = url
+            self.state.last_page = page
+            self.state.last_item = item
+            self.state.last_url = url
             self.state.failed.append({"page": page, "item": item, "url": url, "error": error, "time": now()})
             self.log("error", f"失败：第 {page} 页第 {item} 条，{error}")
             self._save_state_locked()
