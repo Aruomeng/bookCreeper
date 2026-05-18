@@ -1,0 +1,34 @@
+# Python caches
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Local OS/editor files
+.DS_Store
+.idea/
+.vscode/
+
+# Runtime outputs and crawler data
+output/
+*.log
+*.state.json
+
+# Local credentials and environment files
+.env
+.env.*
+cookie.txt
+cookies.txt
+*_cookie.txt
+*_cookies.txt
+*.cookie
+
+# Tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
