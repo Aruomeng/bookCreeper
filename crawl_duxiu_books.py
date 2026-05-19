@@ -289,11 +289,14 @@ def title_from_citation(flat_text: str) -> str:
 
 def extract_title(doc: html.HtmlElement, nodes: list[str], flat_text: str = "", fallback_title: str = "") -> str:
     title_xpaths = [
-        "//dl[.//dd]//dt[1]",
+        "(//dl[.//span[contains(@class,'card_text-dd-label') or contains(@class,'card_text-dd_label')]]//dt)[1]",
+        "(//dl[.//dd]/dt[1])[1]",
+        "//dt[contains(@class,'books-title') or contains(@class,'book-title') or contains(@class,'books_title') or contains(@class,'book_title')][1]",
         "//h1",
         "//h2",
         "//*[contains(@class,'book-title') or contains(@class,'book_title')]",
         "//*[contains(@class,'bookname') or contains(@class,'book-name') or contains(@class,'book_name')]",
+        "//dl[.//dd]//dt[1]",
     ]
     for xp in title_xpaths:
         for node in doc.xpath(xp):
