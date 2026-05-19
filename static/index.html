@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>读秀图书爬虫控制台</title>
-    <link rel="stylesheet" href="/static/styles.css?v=20260518-1" />
+    <link rel="stylesheet" href="./styles.css?v=20260519-2" />
   </head>
   <body>
     <div class="app-shell">
@@ -131,7 +131,16 @@
             <h2>运行状态</h2>
             <p id="lastPosition">最后位置：-</p>
           </div>
-          <div id="statusBadge" class="status-badge idle">idle</div>
+          <div class="topbar-actions">
+            <button id="focusBtn" type="button" class="focus-toggle">
+              <span class="focus-toggle-mark" aria-hidden="true"></span>
+              <span class="focus-toggle-copy">
+                <strong>专注模式</strong>
+                <small>官方网页 + 实时日志</small>
+              </span>
+            </button>
+            <div id="statusBadge" class="status-badge idle">idle</div>
+          </div>
         </section>
 
         <details class="workspace-section metrics-section" open>
@@ -182,6 +191,54 @@
           </div>
         </details>
 
+        <section class="focus-stage">
+          <section class="focus-panel focus-browser-panel">
+            <div class="focus-panel-head">
+              <div class="focus-head-copy">
+                <h3>读秀官方网页</h3>
+                <p id="focusMessage">左侧保持官方网页；一旦发现验证，会自动切到对应页面。</p>
+              </div>
+              <div class="focus-head-actions">
+                <div id="focusStatePill" class="focus-state-pill standby">待机观察</div>
+                <button id="syncFocusPreview" type="button" class="focus-ghost-btn">同步验证页</button>
+                <button id="focusExitBtn" type="button" class="focus-exit-btn">退出专注</button>
+              </div>
+            </div>
+
+            <div class="focus-browser-shell">
+              <div class="focus-browser-bar">
+                <div class="focus-browser-dots" aria-hidden="true">
+                  <span></span>
+                  <span></span>
+                  <span></span>
+                </div>
+                <div id="focusUrl" class="focus-browser-url">https://book.duxiu.com/</div>
+              </div>
+              <div class="focus-browser-viewport">
+                <iframe
+                  id="officialFrame"
+                  class="official-frame"
+                  title="读秀官方网页"
+                  loading="eager"
+                  referrerpolicy="no-referrer"
+                ></iframe>
+              </div>
+            </div>
+          </section>
+
+          <section class="focus-panel focus-console-panel">
+            <div class="focus-panel-head focus-console-head">
+              <div class="focus-head-copy">
+                <h3>实时日志</h3>
+                <p>验证、重定向、风控与运行轨迹会在这里持续刷新。</p>
+              </div>
+              <div id="focusSignal" class="focus-signal standby">未发现验证</div>
+            </div>
+            <section id="focusAlert" class="focus-inline-alert hidden"></section>
+            <div id="focusLogs" class="log-stream focus-log-stream"></div>
+          </section>
+        </section>
+
         <section class="log-workbench">
           <div class="panel logs-panel">
             <div class="panel-title">
@@ -205,6 +262,6 @@
         <div id="recentRows" class="saved-list"></div>
       </aside>
     </div>
-    <script src="/static/app.js?v=20260518-1"></script>
+    <script src="./app.js?v=20260519-2"></script>
   </body>
 </html>

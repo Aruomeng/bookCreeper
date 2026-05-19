@@ -6,20 +6,24 @@ from __future__ import annotations
 import csv
 import json
 import random
+import re
 import threading
 import time
 from collections import deque
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
+from http.cookies import SimpleCookie
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote, urljoin, urlparse
 
 import requests
 import uvicorn
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse, HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
+from lxml import html
 from pydantic import BaseModel
 
 from crawl_duxiu_books import (
@@ -39,10 +43,118 @@ DEFAULT_URL = (
     "https://book.duxiu.com/search?Field=all&channel=search&sw=%E5%9B%BE%E4%B9%A6%E9%A6%86"
     "&ecode=utf-8&edtype=&searchtype=&view=0"
 )
+HTML_CONTENT_TYPES = ("text/html", "application/xhtml+xml")
+BLOCK_HINT_WORDS = ("验证", "验证码", "登录", "风控", "IP 不在")
 
 
 class CrawlBlocked(RuntimeError):
     """Raised when Duxiu asks for login, captcha, or institutional IP access."""
+
+
+def is_allowed_proxy_url(url: str) -> bool:
+    parsed = urlparse(url or "")
+    return parsed.scheme in {"http", "https"} and parsed.netloc.lower().endswith("duxiu.com")
+
+
+def parse_cookie_pairs(cookie_text: str) -> list[tuple[str, str]]:
+    cookie_text = (cookie_text or "").strip()
+    if not cookie_text:
+        return []
+
+    pairs: list[tuple[str, str]] = []
+    jar = SimpleCookie()
+    try:
+        jar.load(cookie_text)
+    except Exception:
+        jar = SimpleCookie()
+    for key, morsel in jar.items():
+        if morsel.value:
+            pairs.append((key, morsel.value))
+    if pairs:
+        return pairs
+
+    for chunk in cookie_text.split(";"):
+        if "=" not in chunk:
+            continue
+        name, value = chunk.split("=", 1)
+        name = name.strip()
+        value = value.strip()
+        if name:
+            pairs.append((name, value))
+    return pairs
+
+
+def proxied_url(raw_url: str, base_url: str) -> str:
+    value = (raw_url or "").strip()
+    if not value:
+        return ""
+    lower = value.lower()
+    if lower.startswith(("#", "javascript:", "mailto:", "tel:", "data:", "blob:")):
+        return value
+
+    absolute = urljoin(base_url, value)
+    if not is_allowed_proxy_url(absolute):
+        return value
+    return f"/proxy?url={quote(absolute, safe='')}"
+
+
+def rewrite_proxy_html(page_html: str, base_url: str) -> str:
+    try:
+        doc = html.fromstring(page_html)
+    except Exception:
+        return page_html
+
+    for base in doc.xpath("//base"):
+        base.drop_tree()
+
+    for attr in ("href", "src", "action", "poster"):
+        for node in doc.xpath(f"//*[@{attr}]"):
+            rewritten = proxied_url(node.get(attr, ""), base_url)
+            if rewritten:
+                node.set(attr, rewritten)
+
+    for node in doc.xpath("//*[@data-src]"):
+        rewritten = proxied_url(node.get("data-src", ""), base_url)
+        if rewritten:
+            node.set("data-src", rewritten)
+
+    for form in doc.xpath("//form[not(@action)]"):
+        form.set("action", proxied_url(base_url, base_url))
+
+    for meta in doc.xpath("//meta[@http-equiv]"):
+        if (meta.get("http-equiv") or "").lower() != "refresh":
+            continue
+        content = meta.get("content") or ""
+        parts = content.split(";", 1)
+        if len(parts) != 2 or "url=" not in parts[1].lower():
+            continue
+        delay = parts[0].strip()
+        _, raw_target = parts[1].split("=", 1)
+        rewritten = proxied_url(raw_target.strip().strip("'\""), base_url)
+        if rewritten:
+            meta.set("content", f"{delay};url={rewritten}")
+
+    return html.tostring(doc, encoding="unicode", method="html")
+
+
+def rewrite_proxy_css(css_text: str, base_url: str) -> str:
+    def replace_url(match: re.Match[str]) -> str:
+        raw = match.group(1).strip().strip("'\"")
+        rewritten = proxied_url(raw, base_url)
+        if rewritten == raw:
+            return match.group(0)
+        return f"url('{rewritten}')"
+
+    def replace_import(match: re.Match[str]) -> str:
+        raw = match.group(1).strip().strip("'\"")
+        rewritten = proxied_url(raw, base_url)
+        if rewritten == raw:
+            return match.group(0)
+        return f"@import url('{rewritten}')"
+
+    css_text = re.sub(r"url\(([^)]+)\)", replace_url, css_text, flags=re.I)
+    css_text = re.sub(r"@import\s+(?:url\()?['\"]?([^'\"\)]+)['\"]?\)?", replace_import, css_text, flags=re.I)
+    return css_text
 
 
 class CrawlConfig(BaseModel):
@@ -145,6 +257,7 @@ class PersistedState:
 class CrawlerService:
     def __init__(self) -> None:
         self.lock = threading.RLock()
+        self.browser_lock = threading.RLock()
         self.thread: threading.Thread | None = None
         self.stop_event = threading.Event()
         self.metrics = CrawlMetrics()
@@ -159,6 +272,9 @@ class CrawlerService:
         self.csv_writer: csv.DictWriter | None = None
         self.output_base = Path("output/duxiu_books")
         self.last_json_flush = 0
+        self.browser_session = requests.Session()
+        self.browser_cookie_seed = ""
+        self._apply_session_headers(self.browser_session)
 
     def start(self, config: CrawlConfig) -> None:
         self._validate_config(config)
@@ -166,6 +282,7 @@ class CrawlerService:
             if self.thread and self.thread.is_alive():
                 raise RuntimeError("爬虫正在运行，请先停止当前任务。")
             self.config = config
+            self._refresh_browser_session(config, force=True)
             self.stop_event.clear()
             self.metrics = CrawlMetrics(status="starting")
             self.logs.clear()
@@ -203,6 +320,7 @@ class CrawlerService:
             return {
                 "metrics": asdict(self.metrics),
                 "config": self.safe_config(),
+                "focus": self._focus_snapshot_locked(),
                 "logs": list(self.logs)[-300:],
                 "recentRows": list(self.recent_rows),
                 "state": asdict(self.state),
@@ -220,6 +338,28 @@ class CrawlerService:
         data = self.config.model_dump(by_alias=True)
         data["cookie"] = "已填写" if data.get("cookie") else ""
         return data
+
+    def _focus_snapshot_locked(self) -> dict[str, Any]:
+        config = self.config or CrawlConfig()
+        stop_reason = self.metrics.stop_reason or ""
+        needs_attention = self.metrics.status == "blocked" or any(word in stop_reason for word in BLOCK_HINT_WORDS)
+        official_url = self.metrics.last_url if needs_attention and self.metrics.last_url else config.search_url
+        official_url = official_url or DEFAULT_URL
+        preview_stamp = "|".join(
+            [
+                "attention" if needs_attention else "standby",
+                official_url,
+                stop_reason,
+            ]
+        )
+        return {
+            "needsAttention": needs_attention,
+            "officialUrl": official_url,
+            "frameUrl": "/proxy?view=live",
+            "previewStamp": preview_stamp,
+            "message": stop_reason if needs_attention else "左侧保持官方网页；一旦发现验证，会自动切到对应页面。",
+            "status": "attention" if needs_attention else "standby",
+        }
 
     def log(self, level: str, message: str) -> None:
         item = {"time": now(), "level": level, "message": message}
@@ -597,8 +737,21 @@ class CrawlerService:
     def _target_reached(self, config: CrawlConfig) -> bool:
         return config.target_books > 0 and self.metrics.books_saved >= config.target_books
 
-    def _make_session(self, config: CrawlConfig) -> requests.Session:
-        session = requests.Session()
+    def _read_cookie_text(self, config: CrawlConfig | None = None) -> str:
+        active = config or self.config
+        if not active:
+            return ""
+        cookie = active.cookie.strip()
+        if cookie:
+            return cookie
+        if not active.cookie_file:
+            return ""
+        cookie_path = Path(active.cookie_file).expanduser()
+        if cookie_path.exists():
+            return cookie_path.read_text(encoding="utf-8").strip()
+        return ""
+
+    def _apply_session_headers(self, session: requests.Session) -> None:
         session.headers.update(
             {
                 "User-Agent": (
@@ -610,13 +763,65 @@ class CrawlerService:
                 "Referer": "https://book.duxiu.com/",
             }
         )
-        cookie = config.cookie.strip()
-        if not cookie and config.cookie_file:
-            cookie_path = Path(config.cookie_file).expanduser()
-            if cookie_path.exists():
-                cookie = cookie_path.read_text(encoding="utf-8").strip()
-        if cookie:
-            session.headers["Cookie"] = cookie
+
+    def _apply_cookie_text(self, session: requests.Session, cookie_text: str) -> None:
+        for name, value in parse_cookie_pairs(cookie_text):
+            session.cookies.set(name, value)
+
+    def _copy_browser_cookies(self, target: requests.Session) -> None:
+        with self.browser_lock:
+            for cookie in self.browser_session.cookies:
+                kwargs: dict[str, Any] = {}
+                if cookie.domain:
+                    kwargs["domain"] = cookie.domain
+                if cookie.path:
+                    kwargs["path"] = cookie.path
+                target.cookies.set(cookie.name, cookie.value, **kwargs)
+
+    def _refresh_browser_session(self, config: CrawlConfig | None = None, force: bool = False) -> None:
+        active = config or self.config or CrawlConfig()
+        cookie_text = self._read_cookie_text(active)
+        with self.browser_lock:
+            if force or cookie_text != self.browser_cookie_seed:
+                self.browser_session = requests.Session()
+                self._apply_session_headers(self.browser_session)
+                self._apply_cookie_text(self.browser_session, cookie_text)
+                self.browser_cookie_seed = cookie_text
+            else:
+                self._apply_session_headers(self.browser_session)
+
+    def resolve_proxy_target(self, explicit_url: str = "", view: str = "") -> str:
+        if explicit_url and is_allowed_proxy_url(explicit_url):
+            return explicit_url
+        with self.lock:
+            focus = self._focus_snapshot_locked()
+            target = focus["officialUrl"] if view == "live" else (self.config.search_url if self.config else DEFAULT_URL)
+        return target if is_allowed_proxy_url(target) else DEFAULT_URL
+
+    def proxy_request(self, method: str, url: str, body: bytes = b"", content_type: str = "") -> requests.Response:
+        self._refresh_browser_session()
+        extra_headers = {"Referer": url}
+        if content_type:
+            extra_headers["Content-Type"] = content_type
+        with self.browser_lock:
+            resp = self.browser_session.request(
+                method=method.upper(),
+                url=url,
+                data=body or None,
+                headers=extra_headers,
+                allow_redirects=True,
+                timeout=45,
+            )
+        if not resp.encoding or resp.encoding.lower() == "iso-8859-1":
+            resp.encoding = resp.apparent_encoding
+        return resp
+
+    def _make_session(self, config: CrawlConfig) -> requests.Session:
+        session = requests.Session()
+        self._apply_session_headers(session)
+        self._apply_cookie_text(session, self._read_cookie_text(config))
+        self._refresh_browser_session(config)
+        self._copy_browser_cookies(session)
         return session
 
 
@@ -632,6 +837,16 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 @app.get("/")
 def index() -> FileResponse:
     return FileResponse(STATIC_DIR / "index.html")
+
+
+@app.get("/styles.css")
+def app_styles() -> FileResponse:
+    return FileResponse(STATIC_DIR / "styles.css")
+
+
+@app.get("/app.js")
+def app_script() -> FileResponse:
+    return FileResponse(STATIC_DIR / "app.js")
 
 
 @app.get("/api/default-config")
@@ -657,6 +872,49 @@ def stop() -> dict[str, str]:
 @app.get("/api/status")
 def status() -> dict[str, Any]:
     return service.snapshot()
+
+
+@app.api_route("/proxy", methods=["GET", "POST"])
+async def proxy(request: Request, url: str = "", view: str = "", stamp: str = "") -> Response:
+    del stamp  # cache-busting helper from the frontend; not used server-side
+
+    target = service.resolve_proxy_target(explicit_url=url, view=view)
+    if not is_allowed_proxy_url(target):
+        raise HTTPException(status_code=400, detail="只支持展示读秀官方网页。")
+
+    body = await request.body() if request.method.upper() != "GET" else b""
+    content_type = request.headers.get("content-type", "")
+
+    try:
+        upstream = service.proxy_request(request.method, target, body=body, content_type=content_type)
+    except Exception as exc:
+        error_html = (
+            "<!doctype html><html lang='zh-CN'><meta charset='utf-8' />"
+            "<title>官方网页载入失败</title>"
+            "<body style='margin:0;font-family:Inter,system-ui,sans-serif;background:#f5f7fb;color:#172033;'>"
+            "<div style='min-height:100vh;display:grid;place-items:center;padding:32px;'>"
+            "<div style='max-width:560px;padding:28px 30px;border:1px solid #d9e1ea;border-radius:20px;"
+            "background:#fff;box-shadow:0 24px 60px rgba(15,23,42,.12);'>"
+            "<h1 style='margin:0 0 10px;font-size:22px;'>官方网页暂时无法载入</h1>"
+            "<p style='margin:0;color:#667085;line-height:1.65;'>"
+            f"{exc}"
+            "</p></div></div></body></html>"
+        )
+        return HTMLResponse(error_html, status_code=502)
+
+    content_type_lower = (upstream.headers.get("content-type") or "").lower()
+    if any(item in content_type_lower for item in HTML_CONTENT_TYPES):
+        return HTMLResponse(rewrite_proxy_html(upstream.text, upstream.url), status_code=upstream.status_code)
+    if "text/css" in content_type_lower:
+        return Response(rewrite_proxy_css(upstream.text, upstream.url), status_code=upstream.status_code, media_type="text/css")
+
+    passthrough_headers = {}
+    for header in ("cache-control", "content-disposition", "content-language"):
+        value = upstream.headers.get(header)
+        if value:
+            passthrough_headers[header] = value
+    media_type = upstream.headers.get("content-type") or None
+    return Response(upstream.content, status_code=upstream.status_code, headers=passthrough_headers, media_type=media_type)
 
 
 if __name__ == "__main__":

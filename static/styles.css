@@ -12,8 +12,13 @@
   --amber: #a05a00;
   --red: #c43d45;
   --shadow: 0 14px 34px rgba(15, 23, 42, 0.08);
+  --focus-shadow: 0 28px 70px rgba(15, 23, 42, 0.16);
   --config-width: 372px;
   --rows-width: 370px;
+  --rail-handle-width: 28px;
+  --rail-handle-height: 52px;
+  --rail-handle-offset: 10px;
+  --rail-handle-top: 92px;
 }
 
 * {
@@ -41,12 +46,139 @@ body {
   color: var(--text);
 }
 
+body.standalone-mode {
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  overflow: auto;
+  background:
+    radial-gradient(circle at top left, rgba(37, 87, 214, 0.16), transparent 24%),
+    linear-gradient(180deg, #eef4fb 0%, #e8eff8 100%);
+}
+
+body.standalone-mode .standalone-shell {
+  width: min(680px, 100%);
+}
+
+body.standalone-mode .standalone-card {
+  border: 1px solid rgba(201, 210, 223, 0.9);
+  border-radius: 28px;
+  padding: 28px;
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 30px 70px rgba(15, 23, 42, 0.14);
+  backdrop-filter: blur(14px);
+}
+
+body.standalone-mode .standalone-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 14px;
+  color: #2557d6;
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+body.standalone-mode .standalone-eyebrow::before {
+  content: "";
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: linear-gradient(135deg, #2557d6, #0f766e);
+}
+
+body.standalone-mode .standalone-card h1 {
+  margin: 0 0 10px;
+  font-size: clamp(28px, 5vw, 42px);
+  line-height: 1.08;
+}
+
+body.standalone-mode .standalone-card p {
+  margin: 0;
+  color: #526178;
+  font-size: 15px;
+  line-height: 1.7;
+}
+
+body.standalone-mode .standalone-steps {
+  display: grid;
+  gap: 12px;
+  margin: 24px 0;
+  padding: 0;
+  list-style: none;
+}
+
+body.standalone-mode .standalone-steps li {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+  color: #233046;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+body.standalone-mode .standalone-step-no {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: #0f172a;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+body.standalone-mode .standalone-command {
+  margin-top: 8px;
+  padding: 14px 16px;
+  border-radius: 18px;
+  background: #111827;
+  color: #dbeafe;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 13px;
+  line-height: 1.6;
+  overflow: auto;
+}
+
+body.standalone-mode .standalone-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  margin-top: 18px;
+  padding: 0 18px;
+  border-radius: 999px;
+  background: linear-gradient(135deg, #2557d6, #0f766e);
+  color: #fff;
+  text-decoration: none;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+body.standalone-mode .standalone-note {
+  margin-top: 18px;
+  color: #667085;
+  font-size: 13px;
+}
+
 body.config-collapsed {
-  --config-width: 66px;
+  --config-width: 0px;
 }
 
 body.rows-collapsed {
-  --rows-width: 66px;
+  --rows-width: 0px;
+}
+
+body.config-collapsed .workspace {
+  padding-left: 44px;
+}
+
+body.rows-collapsed .workspace {
+  padding-right: 44px;
 }
 
 h1,
@@ -85,26 +217,34 @@ button.text-btn {
 
 .icon-btn,
 .rail-button {
-  width: 34px;
-  height: 34px;
-  min-height: 34px;
   display: grid;
   place-items: center;
   padding: 0;
   border: 1px solid var(--line);
   background: #fff;
   color: #334155;
-  font-size: 20px;
   line-height: 1;
 }
 
+.icon-btn {
+  width: 30px;
+  height: 30px;
+  min-height: 30px;
+  border-radius: 10px;
+  font-size: 17px;
+}
+
 .rail-button {
-  width: 38px;
-  height: 38px;
-  min-height: 38px;
-  background: #101828;
+  width: var(--rail-handle-width);
+  height: var(--rail-handle-height);
+  min-height: var(--rail-handle-height);
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.94);
   color: #fff;
-  border-color: #101828;
+  border-color: rgba(148, 163, 184, 0.24);
+  font-size: 16px;
+  box-shadow: 0 14px 28px rgba(15, 23, 42, 0.18);
+  backdrop-filter: blur(14px);
 }
 
 .app-shell {
@@ -226,6 +366,10 @@ h2 {
   gap: 10px;
   overflow: auto;
   padding-right: 2px;
+}
+
+.config-scroll > .collapse-group {
+  flex: 0 0 auto;
 }
 
 .collapse-group,
@@ -388,8 +532,60 @@ summary {
   gap: 16px;
 }
 
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
 .topbar h2 {
   font-size: 22px;
+}
+
+.focus-toggle {
+  min-height: 46px;
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 16px 8px 10px;
+  border-radius: 999px;
+  background: linear-gradient(135deg, #0f172a, #1d4ed8 72%, #0f766e);
+  box-shadow: 0 18px 36px rgba(37, 87, 214, 0.22);
+}
+
+.focus-toggle.active {
+  background: linear-gradient(135deg, #08111f, #0f3a73 68%, #0b5b64);
+  box-shadow: 0 22px 40px rgba(8, 17, 31, 0.24);
+}
+
+.focus-toggle-mark {
+  width: 28px;
+  height: 28px;
+  flex: 0 0 28px;
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 35% 35%, rgba(255, 255, 255, 0.92), rgba(255, 255, 255, 0.18) 42%, transparent 44%),
+    radial-gradient(circle at 65% 68%, rgba(255, 255, 255, 0.22), transparent 46%),
+    rgba(255, 255, 255, 0.18);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.22);
+}
+
+.focus-toggle-copy {
+  display: grid;
+  text-align: left;
+  gap: 2px;
+}
+
+.focus-toggle-copy strong {
+  font-size: 13px;
+  line-height: 1.1;
+}
+
+.focus-toggle-copy small {
+  color: rgba(255, 255, 255, 0.76);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.2;
 }
 
 .status-badge {
@@ -514,6 +710,10 @@ summary {
   min-height: 0;
 }
 
+.focus-stage {
+  display: none;
+}
+
 .logs-panel {
   height: 100%;
   display: grid;
@@ -569,6 +769,240 @@ summary {
 
 .level-error {
   color: #fca5a5;
+}
+
+.focus-panel {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  border-radius: 28px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.72);
+  background: rgba(255, 255, 255, 0.82);
+  box-shadow: var(--focus-shadow);
+  backdrop-filter: blur(18px);
+}
+
+.focus-panel-head {
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 22px 24px 18px;
+}
+
+.focus-head-copy {
+  min-width: 0;
+}
+
+.focus-head-copy h3 {
+  font-size: 20px;
+  line-height: 1.1;
+}
+
+.focus-head-copy p {
+  margin-top: 7px;
+  color: #5f6b80;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.focus-head-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.focus-state-pill,
+.focus-signal {
+  min-height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 14px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 0.02em;
+}
+
+.focus-state-pill.standby,
+.focus-signal.standby {
+  background: rgba(37, 87, 214, 0.09);
+  color: #2557d6;
+}
+
+.focus-state-pill.attention,
+.focus-signal.attention {
+  background: rgba(160, 90, 0, 0.12);
+  color: #8a4c00;
+}
+
+.focus-ghost-btn,
+.focus-exit-btn {
+  min-height: 36px;
+  padding: 0 14px;
+  border-radius: 999px;
+  font-size: 12px;
+}
+
+.focus-ghost-btn {
+  background: rgba(15, 23, 42, 0.06);
+  color: #233046;
+}
+
+.focus-exit-btn {
+  background: #0f172a;
+  color: #fff;
+}
+
+.focus-browser-shell {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  padding: 0 20px 20px;
+}
+
+.focus-browser-bar {
+  min-width: 0;
+  min-height: 50px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 0 18px;
+  border: 1px solid rgba(214, 223, 234, 0.88);
+  border-bottom: 0;
+  border-radius: 20px 20px 0 0;
+  background: linear-gradient(180deg, rgba(248, 250, 252, 0.95), rgba(239, 244, 250, 0.94));
+}
+
+.focus-browser-dots {
+  display: flex;
+  gap: 7px;
+}
+
+.focus-browser-dots span {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #cbd5e1;
+}
+
+.focus-browser-dots span:first-child {
+  background: #f59e0b;
+}
+
+.focus-browser-dots span:nth-child(2) {
+  background: #38bdf8;
+}
+
+.focus-browser-dots span:last-child {
+  background: #22c55e;
+}
+
+.focus-browser-url {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #526178;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.focus-browser-viewport {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid rgba(214, 223, 234, 0.88);
+  border-radius: 0 0 24px 24px;
+  background: #fff;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.72);
+}
+
+.official-frame {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: #fff;
+}
+
+.focus-console-panel {
+  border-color: rgba(147, 197, 253, 0.14);
+  background: linear-gradient(180deg, rgba(8, 17, 31, 0.96), rgba(10, 20, 37, 0.96));
+}
+
+.focus-console-panel .focus-head-copy h3,
+.focus-console-panel .focus-head-copy p {
+  color: #f8fafc;
+}
+
+.focus-console-panel .focus-head-copy p {
+  color: rgba(219, 234, 254, 0.72);
+}
+
+.focus-inline-alert {
+  margin: 0 20px 14px;
+  padding: 12px 14px;
+  border: 1px solid rgba(245, 158, 11, 0.28);
+  border-radius: 16px;
+  background: rgba(160, 90, 0, 0.14);
+  color: #fde68a;
+  font-size: 13px;
+}
+
+.focus-log-stream {
+  background: transparent;
+  padding: 0 20px 20px;
+}
+
+body.focus-mode {
+  background:
+    radial-gradient(circle at top left, rgba(110, 168, 255, 0.2), transparent 24%),
+    radial-gradient(circle at right 18%, rgba(15, 118, 110, 0.12), transparent 18%),
+    linear-gradient(180deg, #edf3fb 0%, #e6edf8 46%, #dde7f3 100%);
+}
+
+body.focus-mode .app-shell {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+body.focus-mode .config-panel,
+body.focus-mode .rows-drawer {
+  display: none;
+}
+
+body.focus-mode .workspace {
+  grid-template-rows: minmax(0, 1fr);
+  padding: 24px;
+}
+
+body.focus-mode .topbar,
+body.focus-mode .workspace-section,
+body.focus-mode .progress-panel,
+body.focus-mode .log-workbench,
+body.focus-mode #alertBox {
+  display: none;
+}
+
+body.focus-mode .focus-stage {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1.12fr) minmax(360px, 0.88fr);
+  gap: 18px;
+}
+
+body.focus-mode.needs-attention .focus-browser-panel {
+  box-shadow:
+    0 28px 70px rgba(15, 23, 42, 0.16),
+    0 0 0 1px rgba(245, 158, 11, 0.24),
+    0 0 0 10px rgba(245, 158, 11, 0.06);
 }
 
 .rows-drawer {
@@ -638,11 +1072,14 @@ summary {
 
 body.config-collapsed .config-panel {
   grid-template-rows: auto minmax(0, 1fr);
+  position: relative;
+  overflow: visible;
+  border-right: 0;
+  background: transparent;
 }
 
 body.config-collapsed .brand {
-  justify-content: center;
-  padding-inline: 12px;
+  display: none;
 }
 
 body.config-collapsed .brand-copy,
@@ -652,27 +1089,33 @@ body.config-collapsed .config-content {
 }
 
 body.config-collapsed .collapsed-rail {
-  min-height: 0;
+  position: fixed;
+  left: var(--rail-handle-offset);
+  top: var(--rail-handle-top);
+  z-index: 30;
   display: flex;
   align-items: center;
-  justify-content: flex-start;
-  gap: 14px;
-  flex-direction: column;
-  padding-top: 14px;
-  border-top: 1px solid var(--line);
+  justify-content: center;
+  min-height: 0;
+  padding: 0;
 }
 
 body.config-collapsed .collapsed-rail span {
-  writing-mode: vertical-rl;
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 850;
+  display: none;
+}
+
+body.config-collapsed .collapsed-rail .rail-button {
+  transform: none;
 }
 
 body.rows-collapsed .rows-drawer {
   grid-template-rows: minmax(0, 1fr);
+  position: relative;
+  overflow: visible;
   place-items: start center;
-  padding-top: 14px;
+  padding-top: 0;
+  border-left: 0;
+  background: transparent;
 }
 
 body.rows-collapsed .rows-header,
@@ -682,6 +1125,11 @@ body.rows-collapsed .saved-list {
 
 body.rows-collapsed #expandRows {
   display: grid;
+  position: fixed;
+  right: var(--rail-handle-offset);
+  top: var(--rail-handle-top);
+  z-index: 30;
+  transform: none;
 }
 
 @media (max-width: 1240px) {
@@ -692,6 +1140,11 @@ body.rows-collapsed #expandRows {
 
   .metrics-grid {
     grid-template-columns: repeat(3, minmax(120px, 1fr));
+  }
+
+  body.focus-mode .focus-stage {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(460px, 1fr) minmax(320px, 0.82fr);
   }
 }
 
@@ -727,6 +1180,21 @@ body.rows-collapsed #expandRows {
     grid-template-rows: auto;
   }
 
+  .topbar-actions {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  body.config-collapsed .workspace,
+  body.rows-collapsed .workspace {
+    padding-inline: 16px;
+  }
+
+  .focus-toggle {
+    width: 100%;
+    justify-content: center;
+  }
+
   .config-content,
   .config-scroll,
   .saved-list {
@@ -736,6 +1204,26 @@ body.rows-collapsed #expandRows {
 
   body.config-collapsed .brand-copy {
     display: block;
+  }
+
+  body.config-collapsed .brand {
+    display: flex;
+    justify-content: space-between;
+    padding-inline: 16px;
+  }
+
+  body.config-collapsed .config-panel,
+  body.rows-collapsed .rows-drawer {
+    overflow: hidden;
+    background: rgba(255, 255, 255, 0.96);
+  }
+
+  body.config-collapsed .config-panel {
+    border-right: 1px solid var(--line);
+  }
+
+  body.rows-collapsed .rows-drawer {
+    border-left: 1px solid var(--line);
   }
 
   body.config-collapsed #toggleConfig,
@@ -749,10 +1237,6 @@ body.rows-collapsed #expandRows {
 
   body.rows-collapsed .saved-list {
     display: block;
-  }
-
-  body.config-collapsed .brand {
-    justify-content: space-between;
   }
 
   body.config-collapsed .collapsed-rail,
@@ -772,5 +1256,38 @@ body.rows-collapsed #expandRows {
   .topbar {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  body.focus-mode .workspace {
+    padding: 16px;
+  }
+
+  body.focus-mode .focus-stage {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto auto;
+    gap: 14px;
+  }
+
+  .focus-panel-head {
+    flex-direction: column;
+    padding: 18px 18px 14px;
+  }
+
+  .focus-head-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .focus-browser-shell {
+    padding: 0 14px 14px;
+  }
+
+  .focus-log-stream {
+    height: 360px;
+    padding: 0 16px 16px;
+  }
+
+  .focus-inline-alert {
+    margin: 0 16px 12px;
   }
 }

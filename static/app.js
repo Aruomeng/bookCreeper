@@ -1,5 +1,35 @@
 const $ = (id) => document.getElementById(id);
 
+if (window.location.protocol === "file:") {
+  document.body.className = "standalone-mode";
+  document.body.innerHTML = `
+    <div class="standalone-shell">
+      <section class="standalone-card">
+        <div class="standalone-eyebrow">bookCreeper</div>
+        <h1>这个页面不能直接双击打开。</h1>
+        <p>你现在打开的是静态文件，所以样式、接口和实时状态都不会正确工作。请通过本地服务启动控制台，再访问浏览器地址。</p>
+        <ol class="standalone-steps">
+          <li>
+            <span class="standalone-step-no">1</span>
+            <div>
+              在项目根目录运行：
+              <div class="standalone-command">python3 crawler_app.py</div>
+            </div>
+          </li>
+          <li>
+            <span class="standalone-step-no">2</span>
+            <div>
+              浏览器打开：
+              <div class="standalone-command">http://127.0.0.1:8000</div>
+            </div>
+          </li>
+        </ol>
+        <a class="standalone-link" href="http://127.0.0.1:8000">打开本地控制台</a>
+        <p class="standalone-note">如果本地服务还没启动，上面的地址会暂时无法访问。</p>
+      </section>
+    </div>
+  `;
+} else {
 const fields = [
   "searchUrl",
   "startPage",
@@ -28,10 +58,12 @@ const numericFields = new Set([
   "retryDelay",
 ]);
 
-let lastLogCount = 0;
-let configDirty = false;
 const CONFIG_KEY = "duxiuCrawlerConfig";
 const UI_KEY = "duxiuCrawlerUi";
+
+let lastLogSignature = "";
+let configDirty = false;
+let latestFocus = null;
 
 function readConfig() {
   const config = {};
@@ -109,51 +141,108 @@ function readUiState() {
   }
 }
 
+function isFocusMode() {
+  return document.body.classList.contains("focus-mode");
+}
+
 function persistUiState() {
   localStorage.setItem(
     UI_KEY,
     JSON.stringify({
       configCollapsed: document.body.classList.contains("config-collapsed"),
       rowsCollapsed: document.body.classList.contains("rows-collapsed"),
+      focusMode: isFocusMode(),
     }),
   );
+}
+
+function setFocusButtonState() {
+  const active = isFocusMode();
+  const btn = $("focusBtn");
+  if (btn) {
+    btn.classList.toggle("active", active);
+    btn.setAttribute("aria-pressed", String(active));
+    const title = btn.querySelector("strong");
+    const subtitle = btn.querySelector("small");
+    if (title) title.textContent = active ? "专注中" : "专注模式";
+    if (subtitle) subtitle.textContent = active ? "返回常规控制台" : "官方网页 + 实时日志";
+  }
 }
 
 function updateLayoutButtons() {
   const configCollapsed = document.body.classList.contains("config-collapsed");
   const rowsCollapsed = document.body.classList.contains("rows-collapsed");
-  $("toggleConfig").setAttribute("aria-expanded", String(!configCollapsed));
-  $("expandConfig").setAttribute("aria-expanded", String(!configCollapsed));
-  $("toggleRows").setAttribute("aria-expanded", String(!rowsCollapsed));
-  $("expandRows").setAttribute("aria-expanded", String(!rowsCollapsed));
+  $("toggleConfig")?.setAttribute("aria-expanded", String(!configCollapsed));
+  $("expandConfig")?.setAttribute("aria-expanded", String(!configCollapsed));
+  $("toggleRows")?.setAttribute("aria-expanded", String(!rowsCollapsed));
+  $("expandRows")?.setAttribute("aria-expanded", String(!rowsCollapsed));
+  setFocusButtonState();
+}
+
+function syncOfficialFrame(focus = latestFocus, options = {}) {
+  const { force = false } = options;
+  const frame = $("officialFrame");
+  if (!frame || !focus) return;
+
+  const stamp = focus.previewStamp || String(Date.now());
+  const base = focus.frameUrl || "/proxy?view=live";
+  const nextSrc = `${base}${base.includes("?") ? "&" : "?"}stamp=${encodeURIComponent(stamp)}`;
+  if (force || !frame.getAttribute("src") || frame.dataset.previewStamp !== stamp) {
+    frame.src = nextSrc;
+    frame.dataset.previewStamp = stamp;
+  }
+  setText("focusUrl", focus.officialUrl || "https://book.duxiu.com/");
+}
+
+function enterFocusMode() {
+  document.body.classList.add("focus-mode");
+  updateLayoutButtons();
+  persistUiState();
+  syncOfficialFrame(latestFocus, { force: true });
+}
+
+function exitFocusMode() {
+  document.body.classList.remove("focus-mode");
+  updateLayoutButtons();
+  persistUiState();
+}
+
+function toggleFocusMode(force) {
+  const nextState = typeof force === "boolean" ? force : !isFocusMode();
+  if (nextState) enterFocusMode();
+  else exitFocusMode();
 }
 
 function setupLayout() {
   const state = readUiState();
   document.body.classList.toggle("config-collapsed", Boolean(state.configCollapsed));
   document.body.classList.toggle("rows-collapsed", state.rowsCollapsed !== false);
+  document.body.classList.toggle("focus-mode", Boolean(state.focusMode));
   updateLayoutButtons();
 
-  $("toggleConfig").addEventListener("click", () => {
+  $("toggleConfig")?.addEventListener("click", () => {
     document.body.classList.add("config-collapsed");
     updateLayoutButtons();
     persistUiState();
   });
-  $("expandConfig").addEventListener("click", () => {
+  $("expandConfig")?.addEventListener("click", () => {
     document.body.classList.remove("config-collapsed");
     updateLayoutButtons();
     persistUiState();
   });
-  $("toggleRows").addEventListener("click", () => {
+  $("toggleRows")?.addEventListener("click", () => {
     document.body.classList.add("rows-collapsed");
     updateLayoutButtons();
     persistUiState();
   });
-  $("expandRows").addEventListener("click", () => {
+  $("expandRows")?.addEventListener("click", () => {
     document.body.classList.remove("rows-collapsed");
     updateLayoutButtons();
     persistUiState();
   });
+  $("focusBtn")?.addEventListener("click", () => toggleFocusMode());
+  $("focusExitBtn")?.addEventListener("click", () => toggleFocusMode(false));
+  $("syncFocusPreview")?.addEventListener("click", () => syncOfficialFrame(latestFocus, { force: true }));
 }
 
 async function startCrawl(event) {
@@ -181,20 +270,22 @@ async function stopCrawl() {
 }
 
 function showAlert(message) {
-  const box = $("alertBox");
-  box.textContent = message;
-  box.classList.remove("hidden");
+  for (const id of ["alertBox", "focusAlert"]) {
+    const box = $(id);
+    if (!box) continue;
+    box.textContent = message;
+    box.classList.remove("hidden");
+  }
 }
 
 function hideAlert() {
-  $("alertBox").classList.add("hidden");
+  for (const id of ["alertBox", "focusAlert"]) {
+    $(id)?.classList.add("hidden");
+  }
 }
 
-function renderLogs(logs) {
-  const box = $("logs");
-  if (logs.length === lastLogCount && box.children.length) return;
-  lastLogCount = logs.length;
-  box.innerHTML = logs
+function buildLogsHtml(logs) {
+  return logs
     .map(
       (log) => `
       <div class="log-line">
@@ -205,11 +296,25 @@ function renderLogs(logs) {
     `,
     )
     .join("");
-  box.scrollTop = box.scrollHeight;
+}
+
+function renderLogs(logs) {
+  const last = logs.at(-1);
+  const signature = `${logs.length}:${last?.time || ""}:${last?.level || ""}:${last?.message || ""}`;
+  if (signature === lastLogSignature && $("logs")?.children.length) return;
+  lastLogSignature = signature;
+  const html = buildLogsHtml(logs);
+  for (const id of ["logs", "focusLogs"]) {
+    const box = $(id);
+    if (!box) continue;
+    box.innerHTML = html;
+    box.scrollTop = box.scrollHeight;
+  }
 }
 
 function renderRows(rows) {
   const list = $("recentRows");
+  if (!list) return;
   if (!rows.length) {
     list.innerHTML = `<div class="saved-list-empty">暂无记录</div>`;
     return;
@@ -236,11 +341,35 @@ function renderRows(rows) {
     .join("");
 }
 
+function renderFocusState(focus) {
+  latestFocus = focus || null;
+  if (!focus) return;
+
+  setText("focusMessage", focus.message || "左侧保持官方网页；一旦发现验证，会自动切到对应页面。");
+  setText("focusUrl", focus.officialUrl || "https://book.duxiu.com/");
+
+  const statePill = $("focusStatePill");
+  if (statePill) {
+    statePill.textContent = focus.needsAttention ? "需要验证" : "待机观察";
+    statePill.className = `focus-state-pill ${focus.status || "standby"}`;
+  }
+
+  const signal = $("focusSignal");
+  if (signal) {
+    signal.textContent = focus.needsAttention ? "发现验证，请在左侧处理" : "未发现验证";
+    signal.className = `focus-signal ${focus.status || "standby"}`;
+  }
+
+  document.body.classList.toggle("needs-attention", Boolean(focus.needsAttention));
+  if (isFocusMode()) syncOfficialFrame(focus);
+}
+
 async function refreshStatus() {
   const res = await fetch("/api/status");
   const data = await res.json();
   const metrics = data.metrics || {};
   const files = data.files || {};
+  const focus = data.focus || {};
   const status = metrics.status || "idle";
 
   setText("statusText", status);
@@ -251,45 +380,50 @@ async function refreshStatus() {
   setText("failedCount", metrics.failed_count ?? 0);
   setText("inFlight", metrics.in_flight ?? 0);
   setText("lastTitle", metrics.last_title || "-");
-  setText(
-    "lastPosition",
-    `最后位置：第 ${metrics.last_page || 0} 页第 ${metrics.last_item || 0} 条`,
-  );
+  setText("lastPosition", `最后位置：第 ${metrics.last_page || 0} 页第 ${metrics.last_item || 0} 条`);
   setText("csvPath", `CSV: ${files.csv || "-"}`);
   setText("jsonPath", `JSON: ${files.json || "-"}`);
   setText("statePath", `STATE: ${files.state || "-"}`);
 
   const badge = $("statusBadge");
-  badge.textContent = status;
-  badge.className = statusClass(status);
+  if (badge) {
+    badge.textContent = status;
+    badge.className = statusClass(status);
+  }
 
   const pagesTotal = metrics.pages_total || 0;
   const pagesCompleted = metrics.pages_completed || 0;
   setText("pageProgressLabel", `${pagesCompleted} / ${pagesTotal}`);
-  $("pageProgress").style.width = pagesTotal ? `${Math.min(100, (pagesCompleted / pagesTotal) * 100)}%` : "0%";
+  const progress = $("pageProgress");
+  if (progress) {
+    progress.style.width = pagesTotal ? `${Math.min(100, (pagesCompleted / pagesTotal) * 100)}%` : "0%";
+  }
 
   if (metrics.stop_reason) showAlert(metrics.stop_reason);
   else hideAlert();
 
   renderLogs(data.logs || []);
   renderRows(data.recentRows || []);
+  renderFocusState(focus);
 }
 
-$("crawlForm").addEventListener("submit", startCrawl);
-$("crawlForm").addEventListener("input", () => {
+$("crawlForm")?.addEventListener("submit", startCrawl);
+$("crawlForm")?.addEventListener("input", () => {
   configDirty = true;
   persistConfig();
 });
-$("crawlForm").addEventListener("change", () => {
+$("crawlForm")?.addEventListener("change", () => {
   configDirty = true;
   persistConfig();
 });
-$("stopBtn").addEventListener("click", stopCrawl);
-$("clearLogs").addEventListener("click", () => {
+$("stopBtn")?.addEventListener("click", stopCrawl);
+$("clearLogs")?.addEventListener("click", () => {
   $("logs").innerHTML = "";
-  lastLogCount = 0;
+  $("focusLogs").innerHTML = "";
+  lastLogSignature = "";
 });
 
 setupLayout();
 loadDefaults().then(refreshStatus);
 setInterval(refreshStatus, 1500);
+}
