@@ -895,31 +895,33 @@ summary {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 12px;
   line-height: 1.58;
-  white-space: nowrap;
 }
 
 .log-line {
-  width: max-content;
   min-width: 100%;
-  display: flex;
+  display: grid;
+  grid-template-columns: 132px 52px minmax(0, 1fr);
   gap: 12px;
-  padding: 3px 0;
+  align-items: start;
+  padding: 6px 0;
   border-bottom: 1px solid rgba(255, 255, 255, 0.055);
-  white-space: nowrap;
 }
 
 .log-time {
-  flex: 0 0 132px;
   color: #cbd5e1;
+  white-space: nowrap;
 }
 
 .log-level {
-  flex: 0 0 46px;
   text-transform: uppercase;
+  white-space: nowrap;
 }
 
 .log-message {
-  flex: 0 0 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  white-space: normal;
 }
 
 .level-info {
@@ -1421,6 +1423,12 @@ body.rows-collapsed #expandRows {
 
   .log-stream {
     height: 420px;
+  }
+
+  .log-line {
+    grid-template-columns: 1fr;
+    gap: 2px;
+    padding: 8px 0;
   }
 
   .topbar {
