@@ -204,6 +204,12 @@ button:hover {
   filter: brightness(0.96);
 }
 
+button:disabled {
+  cursor: not-allowed;
+  filter: grayscale(0.15);
+  opacity: 0.55;
+}
+
 button.secondary {
   background: #253044;
 }
@@ -842,12 +848,19 @@ summary {
   color: #8a4c00;
 }
 
+.focus-primary-btn,
 .focus-ghost-btn,
 .focus-exit-btn {
   min-height: 36px;
   padding: 0 14px;
   border-radius: 999px;
   font-size: 12px;
+}
+
+.focus-primary-btn {
+  background: linear-gradient(135deg, #2557d6, #0f766e);
+  color: #fff;
+  box-shadow: 0 12px 24px rgba(37, 87, 214, 0.18);
 }
 
 .focus-ghost-btn {

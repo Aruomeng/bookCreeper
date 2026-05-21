@@ -272,6 +272,7 @@ class CrawlerService:
         self.csv_writer: csv.DictWriter | None = None
         self.output_base = Path("output/duxiu_books")
         self.last_json_flush = 0
+        self.blocked_debug_saved = False
         self.browser_session = requests.Session()
         self.browser_cookie_seed = ""
         self._apply_session_headers(self.browser_session)
@@ -291,6 +292,7 @@ class CrawlerService:
             self.processed_urls = set()
             self.completed_pages = set()
             self.last_json_flush = 0
+            self.blocked_debug_saved = False
             self.output_base = Path(config.output)
             self.thread = threading.Thread(target=self._run, args=(config,), daemon=True)
             self.thread.start()
@@ -518,7 +520,7 @@ class CrawlerService:
                     except CrawlBlocked as exc:
                         blocked_error = exc
                         self.stop_event.set()
-                        continue
+                        break
                     except Exception as exc:
                         page_failed += 1
                         self._record_failure(page, idx, url, str(exc))
@@ -534,6 +536,8 @@ class CrawlerService:
                 if blocked_error:
                     for future in futures:
                         future.cancel()
+                    with self.lock:
+                        self.metrics.in_flight = 0
                     raise blocked_error
 
         with self.lock:
@@ -584,15 +588,7 @@ class CrawlerService:
                     resp.encoding = resp.apparent_encoding
                 block_reason = self._detect_block(resp.text, resp.url)
                 if block_reason:
-                    with self.lock:
-                        self.metrics.last_page = page
-                        self.metrics.last_item = item
-                        self.metrics.last_url = url
-                        self.state.last_page = page
-                        self.state.last_item = item
-                        self.state.last_url = url
-                    self._save_block_html(resp.text, page, item, config)
-                    raise CrawlBlocked(f"{block_reason}；停止在第 {page} 页第 {item} 条。")
+                    raise self._blocked_error(session, resp.text, block_reason, page, item, url, config)
                 resp.raise_for_status()
                 return resp
             except CrawlBlocked:
@@ -628,19 +624,98 @@ class CrawlerService:
                 return f"遇到验证/风控页面：{word}"
         return ""
 
-    def _save_block_html(self, text: str, page: int, item: int, config: CrawlConfig) -> None:
-        self._save_debug_html(text, "blocked_page", page, item, config)
+    def _visible_html_text(self, page_html: str) -> str:
+        try:
+            doc = html.fromstring(page_html)
+        except Exception:
+            return page_html[:8000]
+        for node in doc.xpath("//script|//style|//noscript"):
+            node.drop_tree()
+        return re.sub(r"\s+", " ", " ".join(doc.xpath("//body//text()[normalize-space()]"))).strip()
 
-    def _save_debug_html(self, text: str, prefix: str, page: int, item: int, config: CrawlConfig) -> None:
+    def _detect_focus_block(self, text: str, final_url: str) -> str:
+        err = access_error(text, final_url)
+        if err:
+            return err
+        lower_url = final_url.lower()
+        if "antispider" in lower_url:
+            return "遇到验证/风控页面：antispider"
+        if "login" in lower_url:
+            return "登录态失效或被重定向到登录页"
+
+        visible_text = self._visible_html_text(text)
+        if looks_like_login(visible_text, final_url):
+            return "登录态失效或被重定向到登录页"
+        focus_block_words = [
+            "验证码",
+            "请输入验证码",
+            "安全验证",
+            "人机验证",
+            "访问过于频繁",
+            "异常访问",
+            "操作太频繁",
+        ]
+        for word in focus_block_words:
+            if word in visible_text[:5000]:
+                return f"遇到验证/风控页面：{word}"
+        return ""
+
+    def _blocked_error(
+        self,
+        session: requests.Session,
+        text: str,
+        reason: str,
+        page: int,
+        item: int,
+        url: str,
+        config: CrawlConfig,
+    ) -> CrawlBlocked:
+        self._copy_session_cookies_to_browser(session)
+        message = f"{reason}；已暂停在第 {page} 页第 {item} 条。请在专注模式左侧完成验证，然后点击“启动/继续”。"
+        should_save_debug = False
+        with self.lock:
+            self.metrics.last_page = page
+            self.metrics.last_item = item
+            self.metrics.last_url = url
+            self.metrics.stop_reason = message
+            self.state.last_page = page
+            self.state.last_item = item
+            self.state.last_url = url
+            self.state.stop_reason = message
+            if not self.blocked_debug_saved:
+                self.blocked_debug_saved = True
+                should_save_debug = True
+            self.stop_event.set()
+
+        debug_path = self._save_block_html(text, page, item, config) if should_save_debug else None
+        if debug_path:
+            self.log("warn", f"遇到验证，已暂停并保存调试 HTML：{debug_path}")
+        return CrawlBlocked(message)
+
+    def _save_block_html(self, text: str, page: int, item: int, config: CrawlConfig) -> Path | None:
+        return self._save_debug_html(text, "blocked_page", page, item, config, announce=False)
+
+    def _save_debug_html(
+        self,
+        text: str,
+        prefix: str,
+        page: int,
+        item: int,
+        config: CrawlConfig,
+        announce: bool = True,
+    ) -> Path | None:
         if not config.save_block_html:
-            return
+            return None
         path = self.output_base.parent / "debug" / f"{prefix}_{page}_item_{item}.html"
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(text, encoding="utf-8")
-            self.log("warn", f"已保存调试 HTML：{path}")
+            if announce:
+                self.log("warn", f"已保存调试 HTML：{path}")
+            return path
         except OSError as exc:
             self.log("warn", f"保存调试 HTML 失败：{exc}")
+            return None
 
     def _save_row(self, row: dict[str, str], page: int, item: int, url: str, config: CrawlConfig) -> bool:
         with self.lock:
@@ -778,6 +853,16 @@ class CrawlerService:
                     kwargs["path"] = cookie.path
                 target.cookies.set(cookie.name, cookie.value, **kwargs)
 
+    def _copy_session_cookies_to_browser(self, source: requests.Session) -> None:
+        with self.browser_lock:
+            for cookie in source.cookies:
+                kwargs: dict[str, Any] = {}
+                if cookie.domain:
+                    kwargs["domain"] = cookie.domain
+                if cookie.path:
+                    kwargs["path"] = cookie.path
+                self.browser_session.cookies.set(cookie.name, cookie.value, **kwargs)
+
     def _refresh_browser_session(self, config: CrawlConfig | None = None, force: bool = False) -> None:
         active = config or self.config or CrawlConfig()
         cookie_text = self._read_cookie_text(active)
@@ -815,6 +900,33 @@ class CrawlerService:
         if not resp.encoding or resp.encoding.lower() == "iso-8859-1":
             resp.encoding = resp.apparent_encoding
         return resp
+
+    def _is_focus_content_page(self, *urls: str) -> bool:
+        for url in urls:
+            parsed = urlparse(url or "")
+            if parsed.netloc.lower() != "book.duxiu.com":
+                continue
+            path = parsed.path.lower()
+            if path.endswith("/search") or "bookdetail.jsp" in path:
+                return True
+        return False
+
+    def note_proxy_response(self, text: str, final_url: str, content_type: str = "", requested_url: str = "") -> None:
+        if not any(item in (content_type or "").lower() for item in HTML_CONTENT_TYPES):
+            return
+        if not self._is_focus_content_page(requested_url, final_url):
+            return
+        if self._detect_focus_block(text, final_url):
+            return
+        with self.lock:
+            if self.metrics.status != "blocked":
+                return
+            self.metrics.status = "stopped"
+            self.metrics.stop_reason = ""
+            self.state.status = "stopped"
+            self.state.stop_reason = ""
+            self._save_state_locked()
+        self.log("info", "验证状态已解除，专注页面已返回正常页面；可以继续任务。")
 
     def _make_session(self, config: CrawlConfig) -> requests.Session:
         session = requests.Session()
@@ -904,6 +1016,8 @@ async def proxy(request: Request, url: str = "", view: str = "", stamp: str = ""
 
     content_type_lower = (upstream.headers.get("content-type") or "").lower()
     if any(item in content_type_lower for item in HTML_CONTENT_TYPES):
+        service.note_proxy_response(upstream.text, upstream.url, content_type_lower, requested_url=target)
+        content_type_lower = (upstream.headers.get("content-type") or "").lower()
         return HTMLResponse(rewrite_proxy_html(upstream.text, upstream.url), status_code=upstream.status_code)
     if "text/css" in content_type_lower:
         return Response(rewrite_proxy_css(upstream.text, upstream.url), status_code=upstream.status_code, media_type="text/css")

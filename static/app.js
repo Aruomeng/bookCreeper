@@ -241,12 +241,13 @@ function setupLayout() {
     persistUiState();
   });
   $("focusBtn")?.addEventListener("click", () => toggleFocusMode());
+  $("focusStartBtn")?.addEventListener("click", () => startCrawl());
   $("focusExitBtn")?.addEventListener("click", () => toggleFocusMode(false));
   $("syncFocusPreview")?.addEventListener("click", () => syncOfficialFrame(latestFocus, { force: true }));
 }
 
 async function startCrawl(event) {
-  event.preventDefault();
+  event?.preventDefault();
   const config = readConfig();
   const res = await fetch("/api/start", {
     method: "POST",
@@ -364,6 +365,22 @@ function renderFocusState(focus) {
   if (isFocusMode()) syncOfficialFrame(focus);
 }
 
+function updateRunControls(status) {
+  const running = ["starting", "running"].includes(status);
+  const blocked = status === "blocked";
+  const stopped = status === "stopped";
+  const focusStartBtn = $("focusStartBtn");
+  const startBtn = $("startBtn");
+  const stopBtn = $("stopBtn");
+
+  if (startBtn) startBtn.disabled = running;
+  if (stopBtn) stopBtn.disabled = !running;
+  if (focusStartBtn) {
+    focusStartBtn.disabled = running;
+    focusStartBtn.textContent = blocked ? "验证后继续" : stopped ? "继续任务" : "启动/继续";
+  }
+}
+
 async function refreshStatus() {
   const res = await fetch("/api/status");
   const data = await res.json();
@@ -390,6 +407,7 @@ async function refreshStatus() {
     badge.textContent = status;
     badge.className = statusClass(status);
   }
+  updateRunControls(status);
 
   const pagesTotal = metrics.pages_total || 0;
   const pagesCompleted = metrics.pages_completed || 0;

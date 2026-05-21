@@ -141,6 +141,25 @@ def is_book_detail_url(url: str) -> bool:
     return bool(re.search(r"(?:/views/specific/\d+/)?bookDetail\.jsp\?", url))
 
 
+def resolve_detail_url(href: str, page_url: str) -> str:
+    href = (href or "").strip()
+    if not href:
+        return ""
+
+    candidate = href
+    if href.lower().startswith("javascript:"):
+        match = re.search(r"""['"]([^'"]*bookDetail\.jsp\?[^'"]*)['"]""", href, flags=re.I)
+        if not match:
+            return ""
+        candidate = match.group(1)
+
+    full = urljoin(page_url, candidate)
+    parsed = urlparse(full)
+    if parsed.scheme not in {"http", "https"}:
+        return ""
+    return full if is_book_detail_url(full) else ""
+
+
 def title_is_noise(title: str) -> bool:
     title = clean_title(title)
     if not title or len(title) > 140:
@@ -190,8 +209,8 @@ def extract_detail_items(page_html: str, page_url: str) -> list[DetailItem]:
     doc = html.fromstring(page_html)
     items: list[DetailItem] = []
     for anchor in doc.xpath("//a[@href]"):
-        full = urljoin(page_url, anchor.get("href") or "")
-        if not is_book_detail_url(full):
+        full = resolve_detail_url(anchor.get("href") or "", page_url)
+        if not full:
             continue
 
         candidates = [anchor.text_content()]
