@@ -513,6 +513,150 @@ summary {
   gap: 7px;
 }
 
+.keyword-queue {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid rgba(37, 87, 214, 0.12);
+  border-radius: 14px;
+  background:
+    radial-gradient(circle at top right, rgba(37, 87, 214, 0.08), transparent 34%),
+    linear-gradient(180deg, #f8fbff, #f3f7fb);
+}
+
+.keyword-queue-head {
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.keyword-queue-head strong {
+  display: block;
+  color: #172033;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.keyword-queue-head p,
+.queue-status {
+  margin-top: 4px;
+  color: #667085;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.queue-badge {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 26px;
+  padding: 0 9px;
+  border-radius: 999px;
+  background: #0f172a;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.keyword-queue input[type="file"] {
+  padding: 7px;
+  background: rgba(255, 255, 255, 0.78);
+}
+
+.queue-options {
+  margin-top: -2px;
+}
+
+.queue-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr auto;
+  gap: 8px;
+}
+
+.queue-next-btn {
+  background: linear-gradient(135deg, #2557d6, #0f766e);
+}
+
+.queue-clear-btn {
+  min-width: 64px;
+  background: transparent;
+  color: #526178;
+  border: 1px solid var(--line);
+}
+
+.queue-list {
+  display: grid;
+  gap: 7px;
+  max-height: 168px;
+  overflow: auto;
+}
+
+.queue-item {
+  min-width: 0;
+  min-height: 38px;
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 8px;
+  border: 1px solid rgba(201, 210, 223, 0.78);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.84);
+  color: #172033;
+  text-align: left;
+}
+
+.queue-item span {
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: #e8eef6;
+  color: #526178;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.queue-item strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.queue-item em {
+  font-style: normal;
+  color: #667085;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.queue-item.active {
+  border-color: rgba(37, 87, 214, 0.38);
+  background: #eff5ff;
+}
+
+.queue-item.active span {
+  background: #2557d6;
+  color: #fff;
+}
+
+.queue-item.done {
+  border-color: rgba(15, 118, 110, 0.28);
+  background: #effaf7;
+}
+
+.queue-item.done span {
+  background: #0f766e;
+  color: #fff;
+}
+
 .actions {
   display: grid;
   grid-template-columns: 1fr 1fr;

@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>读秀图书爬虫控制台</title>
-    <link rel="stylesheet" href="./styles.css?v=20260521-1" />
+    <link rel="stylesheet" href="./styles.css?v=20260521-2" />
   </head>
   <body>
     <div class="app-shell">
@@ -56,6 +56,43 @@
                     <span>目标本数</span>
                     <input id="targetBooks" type="number" min="1" value="10000" />
                   </label>
+
+                  <section class="keyword-queue">
+                    <div class="keyword-queue-head">
+                      <div>
+                        <strong>关键词队列</strong>
+                        <p>每行一个关键词或读秀搜索链接，当前任务完成后手动确认下一个。</p>
+                      </div>
+                      <span id="queueBadge" class="queue-badge">未导入</span>
+                    </div>
+
+                    <label class="field field-full">
+                      <span>上传关键词列表</span>
+                      <input id="keywordFile" type="file" accept=".txt,.csv,text/plain,text/csv" />
+                    </label>
+
+                    <label class="field field-full">
+                      <span>关键词 / 搜索链接</span>
+                      <textarea
+                        id="keywordText"
+                        rows="5"
+                        placeholder="软件工程&#10;信息检索&#10;也可以粘贴完整 book.duxiu.com/search 链接"
+                      ></textarea>
+                    </label>
+
+                    <div class="toggle-row queue-options">
+                      <label><input id="keywordContinuous" type="checkbox" /> 连续模式：完成后自动下一个</label>
+                    </div>
+
+                    <div class="queue-actions">
+                      <button id="keywordImportBtn" type="button" class="secondary">导入队列</button>
+                      <button id="keywordNextBtn" type="button" class="queue-next-btn" disabled>确认进入下一个</button>
+                      <button id="keywordClearBtn" type="button" class="queue-clear-btn">清空</button>
+                    </div>
+
+                    <div id="keywordQueueStatus" class="queue-status">尚未导入关键词。</div>
+                    <div id="keywordQueueList" class="queue-list"></div>
+                  </section>
                 </div>
               </details>
 
@@ -263,6 +300,6 @@
         <div id="recentRows" class="saved-list"></div>
       </aside>
     </div>
-    <script src="./app.js?v=20260521-1"></script>
+    <script src="./app.js?v=20260521-2"></script>
   </body>
 </html>

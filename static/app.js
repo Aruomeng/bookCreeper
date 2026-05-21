@@ -60,10 +60,13 @@ const numericFields = new Set([
 
 const CONFIG_KEY = "duxiuCrawlerConfig";
 const UI_KEY = "duxiuCrawlerUi";
+const QUEUE_KEY = "duxiuCrawlerKeywordQueue";
 
 let lastLogSignature = "";
 let configDirty = false;
 let latestFocus = null;
+let latestStatus = "idle";
+let keywordQueue = loadKeywordQueue();
 
 function readConfig() {
   const config = {};
@@ -117,6 +120,278 @@ function escapeHtml(value) {
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;");
+}
+
+function emptyKeywordQueue() {
+  return {
+    items: [],
+    activeIndex: -1,
+    waiting: false,
+    started: false,
+    baseOutput: "",
+    continuous: false,
+  };
+}
+
+function loadKeywordQueue() {
+  try {
+    const value = JSON.parse(localStorage.getItem(QUEUE_KEY) || "null");
+    if (!value || !Array.isArray(value.items)) return emptyKeywordQueue();
+    return {
+      ...emptyKeywordQueue(),
+      ...value,
+      items: value.items.map((item) => ({
+        keyword: String(item.keyword || "").trim(),
+        url: String(item.url || "").trim(),
+        status: item.status || "pending",
+      })),
+    };
+  } catch {
+    localStorage.removeItem(QUEUE_KEY);
+    return emptyKeywordQueue();
+  }
+}
+
+function persistKeywordQueue() {
+  const continuous = $("keywordContinuous");
+  if (continuous) keywordQueue.continuous = continuous.checked;
+  localStorage.setItem(QUEUE_KEY, JSON.stringify(keywordQueue));
+}
+
+function keywordFromSearchUrl(value) {
+  try {
+    const url = new URL(value.trim());
+    if (!url.hostname.endsWith("duxiu.com")) return "";
+    return (url.searchParams.get("sw") || "").trim();
+  } catch {
+    return "";
+  }
+}
+
+function buildKeywordSearchUrl(keyword) {
+  const url = new URL("https://book.duxiu.com/search");
+  const params = [
+    ["channel", "search"],
+    ["gtag", ""],
+    ["sw", keyword],
+    ["ecode", "utf-8"],
+    ["Field", "all"],
+    ["Sort", ""],
+    ["adminid", ""],
+    ["btype", ""],
+    ["seb", "0"],
+    ["pid", "0"],
+    ["year", ""],
+    ["sectyear", ""],
+    ["showc", "0"],
+    ["fenleiID", ""],
+    ["searchtype", ""],
+    ["authid", "0"],
+    ["exp", "0"],
+    ["expertsw", ""],
+  ];
+  for (const [key, value] of params) url.searchParams.set(key, value);
+  return url.toString();
+}
+
+function parseKeywordEntry(raw) {
+  const value = raw.trim();
+  if (!value) return null;
+  const keyword = keywordFromSearchUrl(value);
+  if (keyword) return { keyword, url: value, status: "pending" };
+  return { keyword: value, url: buildKeywordSearchUrl(value), status: "pending" };
+}
+
+function parseKeywordEntries(text) {
+  const rows = [];
+  for (const rawLine of text.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line) continue;
+    if (/https?:\/\/\S*duxiu\.com\/search/i.test(line)) {
+      rows.push(line);
+    } else {
+      rows.push(...line.split(/[，,;；]/).map((item) => item.trim()).filter(Boolean));
+    }
+  }
+  const seen = new Set();
+  return rows
+    .map(parseKeywordEntry)
+    .filter(Boolean)
+    .filter((item) => {
+      const key = `${item.keyword}|${item.url}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+}
+
+function sanitizeOutputSuffix(keyword, index) {
+  const compact = String(keyword || "")
+    .trim()
+    .replace(/[\\/:*?"<>|#%&{}$!'@+`=]/g, "_")
+    .replace(/\s+/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 36);
+  return compact || `keyword_${index + 1}`;
+}
+
+function outputForKeyword(baseOutput, keyword, index) {
+  const base = (baseOutput || "output/duxiu_books").trim();
+  const slash = base.lastIndexOf("/");
+  const dir = slash >= 0 ? base.slice(0, slash + 1) : "";
+  const name = slash >= 0 ? base.slice(slash + 1) : base;
+  return `${dir}${name || "duxiu_books"}_${sanitizeOutputSuffix(keyword, index)}`;
+}
+
+function baseOutputFromCurrentValue() {
+  const current = ($("output")?.value || keywordQueue.baseOutput || "output/duxiu_books").trim();
+  const activeItem = keywordQueue.items[keywordQueue.activeIndex];
+  if (!activeItem) return current || "output/duxiu_books";
+  const suffix = `_${sanitizeOutputSuffix(activeItem.keyword, keywordQueue.activeIndex)}`;
+  return current.endsWith(suffix) ? current.slice(0, -suffix.length) : current;
+}
+
+function setQueueItemStatus(index, status) {
+  keywordQueue.items = keywordQueue.items.map((item, itemIndex) => ({
+    ...item,
+    status: itemIndex === index ? status : item.status === "active" ? "pending" : item.status,
+  }));
+}
+
+function applyKeywordItem(index) {
+  const item = keywordQueue.items[index];
+  if (!item) return false;
+  const search = $("searchUrl");
+  if (search) search.value = item.url;
+  const startPage = $("startPage");
+  if (startPage) startPage.value = "";
+  const output = $("output");
+  if (output) {
+    output.value = outputForKeyword(keywordQueue.baseOutput, item.keyword, index);
+  }
+  keywordQueue.activeIndex = index;
+  keywordQueue.waiting = false;
+  keywordQueue.started = false;
+  setQueueItemStatus(index, "active");
+  configDirty = true;
+  persistConfig();
+  persistKeywordQueue();
+  renderKeywordQueue();
+  return true;
+}
+
+function renderKeywordQueue() {
+  const badge = $("queueBadge");
+  const status = $("keywordQueueStatus");
+  const list = $("keywordQueueList");
+  const nextBtn = $("keywordNextBtn");
+  const continuous = $("keywordContinuous");
+  if (continuous) continuous.checked = Boolean(keywordQueue.continuous);
+
+  const total = keywordQueue.items.length;
+  const doneCount = keywordQueue.items.filter((item) => item.status === "done").length;
+  const activeItem = keywordQueue.items[keywordQueue.activeIndex];
+  const hasNext = keywordQueue.activeIndex >= 0 && keywordQueue.activeIndex < total - 1;
+
+  if (badge) badge.textContent = total ? `${doneCount}/${total}` : "未导入";
+  if (nextBtn) {
+    nextBtn.disabled = keywordQueue.continuous || !(keywordQueue.waiting && hasNext);
+    nextBtn.textContent = keywordQueue.continuous && hasNext ? "连续模式中" : hasNext ? "确认进入下一个" : "队列已完成";
+  }
+  if (status) {
+    if (!total) {
+      status.textContent = "尚未导入关键词。";
+    } else if (keywordQueue.continuous && hasNext) {
+      status.textContent = `连续模式已开启，“${activeItem?.keyword || "-"}”完成后会自动进入下一个关键词。`;
+    } else if (keywordQueue.waiting && hasNext) {
+      status.textContent = `“${activeItem?.keyword || "-"}”已完成。可先修改参数，然后确认载入下一个关键词。`;
+    } else if (keywordQueue.waiting) {
+      status.textContent = "关键词队列已全部完成。";
+    } else if (activeItem) {
+      status.textContent = `当前关键词 ${keywordQueue.activeIndex + 1}/${total}：${activeItem.keyword}`;
+    } else {
+      status.textContent = `关键词队列已导入 ${total} 个。`;
+    }
+  }
+  if (!list) return;
+  list.innerHTML = keywordQueue.items
+    .map((item, index) => {
+      const state = item.status || "pending";
+      const label = state === "done" ? "完成" : state === "active" ? "当前" : "待处理";
+      return `
+        <button class="queue-item ${state}" type="button" data-index="${index}" title="${escapeHtml(item.url)}">
+          <span>${index + 1}</span>
+          <strong>${escapeHtml(item.keyword)}</strong>
+          <em>${label}</em>
+        </button>
+      `;
+    })
+    .join("");
+}
+
+function importKeywordQueue() {
+  const items = parseKeywordEntries($("keywordText")?.value || "");
+  if (!items.length) {
+    showAlert("请先上传或粘贴关键词列表。");
+    return;
+  }
+  const output = readConfig().output || "output/duxiu_books";
+  keywordQueue = {
+    ...emptyKeywordQueue(),
+    items,
+    baseOutput: output,
+    continuous: $("keywordContinuous")?.checked === true,
+  };
+  applyKeywordItem(0);
+  hideAlert();
+}
+
+function clearKeywordQueue() {
+  keywordQueue = emptyKeywordQueue();
+  localStorage.removeItem(QUEUE_KEY);
+  const text = $("keywordText");
+  if (text) text.value = "";
+  renderKeywordQueue();
+}
+
+function goToNextKeyword() {
+  if (!keywordQueue.waiting) return;
+  const nextIndex = keywordQueue.activeIndex + 1;
+  keywordQueue.baseOutput = baseOutputFromCurrentValue();
+  if (!applyKeywordItem(nextIndex)) return;
+  showAlert("已载入下一个关键词。确认参数后点击“启动”。");
+}
+
+async function startNextKeywordAutomatically() {
+  const nextIndex = keywordQueue.activeIndex + 1;
+  if (!applyKeywordItem(nextIndex)) return;
+  showAlert(`连续模式：已自动载入“${keywordQueue.items[nextIndex]?.keyword || "下一个关键词"}”并启动。`);
+  await startCrawl();
+}
+
+function updateKeywordQueueForStatus(status) {
+  if (!keywordQueue.items.length || keywordQueue.activeIndex < 0) return;
+  if (["starting", "running"].includes(status)) {
+    keywordQueue.started = true;
+    keywordQueue.waiting = false;
+    setQueueItemStatus(keywordQueue.activeIndex, "active");
+    persistKeywordQueue();
+    renderKeywordQueue();
+    return;
+  }
+  if (status !== "completed" || !keywordQueue.started || keywordQueue.waiting) return;
+  setQueueItemStatus(keywordQueue.activeIndex, "done");
+  keywordQueue.started = false;
+  if (keywordQueue.continuous && keywordQueue.activeIndex < keywordQueue.items.length - 1) {
+    persistKeywordQueue();
+    renderKeywordQueue();
+    startNextKeywordAutomatically();
+    return;
+  }
+  keywordQueue.waiting = true;
+  persistKeywordQueue();
+  renderKeywordQueue();
 }
 
 async function loadDefaults() {
@@ -244,6 +519,28 @@ function setupLayout() {
   $("focusStartBtn")?.addEventListener("click", () => startCrawl());
   $("focusExitBtn")?.addEventListener("click", () => toggleFocusMode(false));
   $("syncFocusPreview")?.addEventListener("click", () => syncOfficialFrame(latestFocus, { force: true }));
+  $("keywordImportBtn")?.addEventListener("click", importKeywordQueue);
+  $("keywordClearBtn")?.addEventListener("click", clearKeywordQueue);
+  $("keywordNextBtn")?.addEventListener("click", goToNextKeyword);
+  $("keywordContinuous")?.addEventListener("change", () => {
+    persistKeywordQueue();
+    renderKeywordQueue();
+  });
+  $("keywordFile")?.addEventListener("change", async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    $("keywordText").value = await file.text();
+    importKeywordQueue();
+  });
+  $("keywordQueueList")?.addEventListener("click", (event) => {
+    const item = event.target.closest(".queue-item");
+    if (!item) return;
+    if (["starting", "running"].includes(latestStatus)) {
+      showAlert("任务运行中，不能切换关键词。");
+      return;
+    }
+    applyKeywordItem(Number(item.dataset.index));
+  });
 }
 
 async function startCrawl(event) {
@@ -258,6 +555,13 @@ async function startCrawl(event) {
     const err = await res.json().catch(() => ({}));
     showAlert(err.detail || "启动失败");
     return;
+  }
+  if (keywordQueue.items.length && keywordQueue.activeIndex >= 0) {
+    keywordQueue.started = true;
+    keywordQueue.waiting = false;
+    setQueueItemStatus(keywordQueue.activeIndex, "active");
+    persistKeywordQueue();
+    renderKeywordQueue();
   }
   configDirty = false;
   persistConfig();
@@ -388,6 +692,7 @@ async function refreshStatus() {
   const files = data.files || {};
   const focus = data.focus || {};
   const status = metrics.status || "idle";
+  latestStatus = status;
 
   setText("statusText", status);
   setText("booksSaved", metrics.books_saved ?? 0);
@@ -408,6 +713,7 @@ async function refreshStatus() {
     badge.className = statusClass(status);
   }
   updateRunControls(status);
+  updateKeywordQueueForStatus(status);
 
   const pagesTotal = metrics.pages_total || 0;
   const pagesCompleted = metrics.pages_completed || 0;
@@ -442,6 +748,7 @@ $("clearLogs")?.addEventListener("click", () => {
 });
 
 setupLayout();
+renderKeywordQueue();
 loadDefaults().then(refreshStatus);
 setInterval(refreshStatus, 1500);
 }
