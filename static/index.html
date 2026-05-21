@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>读秀图书爬虫控制台</title>
-    <link rel="stylesheet" href="./styles.css?v=20260521-2" />
+    <link rel="stylesheet" href="./styles.css?v=20260521-3" />
   </head>
   <body>
     <div class="app-shell">
@@ -61,7 +61,7 @@
                     <div class="keyword-queue-head">
                       <div>
                         <strong>关键词队列</strong>
-                        <p>每行一个关键词或读秀搜索链接，当前任务完成后手动确认下一个。</p>
+                        <p>每行一个关键词或读秀搜索链接；每个关键词会写入独立文件夹。</p>
                       </div>
                       <span id="queueBadge" class="queue-badge">未导入</span>
                     </div>
@@ -91,6 +91,7 @@
                     </div>
 
                     <div id="keywordQueueStatus" class="queue-status">尚未导入关键词。</div>
+                    <div id="keywordOutputPreview" class="queue-output-preview hidden"></div>
                     <div id="keywordQueueList" class="queue-list"></div>
                   </section>
                 </div>
@@ -300,6 +301,6 @@
         <div id="recentRows" class="saved-list"></div>
       </aside>
     </div>
-    <script src="./app.js?v=20260521-2"></script>
+    <script src="./app.js?v=20260521-3"></script>
   </body>
 </html>

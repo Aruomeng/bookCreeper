@@ -236,20 +236,57 @@ function sanitizeOutputSuffix(keyword, index) {
   return compact || `keyword_${index + 1}`;
 }
 
+function splitOutputBase(baseOutput) {
+  const normalized = (baseOutput || "output/duxiu_books").trim().replace(/\/+$/g, "") || "output/duxiu_books";
+  const slash = normalized.lastIndexOf("/");
+  const dir = slash >= 0 ? normalized.slice(0, slash) : "";
+  const name = slash >= 0 ? normalized.slice(slash + 1) : normalized;
+  return {
+    rootDir: dir ? `${dir}/${name || "duxiu_books"}` : name || "duxiu_books",
+    fileBase: name || "duxiu_books",
+  };
+}
+
+function outputFolderForKeyword(baseOutput, keyword, index) {
+  const { rootDir } = splitOutputBase(baseOutput);
+  return `${rootDir}/${sanitizeOutputSuffix(keyword, index)}`;
+}
+
 function outputForKeyword(baseOutput, keyword, index) {
-  const base = (baseOutput || "output/duxiu_books").trim();
-  const slash = base.lastIndexOf("/");
-  const dir = slash >= 0 ? base.slice(0, slash + 1) : "";
-  const name = slash >= 0 ? base.slice(slash + 1) : base;
-  return `${dir}${name || "duxiu_books"}_${sanitizeOutputSuffix(keyword, index)}`;
+  const { fileBase } = splitOutputBase(baseOutput);
+  return `${outputFolderForKeyword(baseOutput, keyword, index)}/${fileBase}`;
+}
+
+function stripGeneratedKeywordOutput(value, items = keywordQueue.items) {
+  let normalized = (value || "output/duxiu_books").trim().replace(/\/+$/g, "") || "output/duxiu_books";
+  const candidates = items.length ? items : keywordQueue.items;
+  for (const [index, item] of candidates.entries()) {
+    const suffix = sanitizeOutputSuffix(item.keyword, index);
+    const oldSuffix = `_${suffix}`;
+    if (normalized.endsWith(oldSuffix)) {
+      normalized = normalized.slice(0, -oldSuffix.length);
+      break;
+    }
+
+    const parts = normalized.split("/");
+    if (parts.length >= 3 && parts.at(-2) === suffix) {
+      const fileBase = parts.at(-1);
+      const root = parts.slice(0, -2).join("/");
+      normalized = root && root.split("/").at(-1) === fileBase ? root : root ? `${root}/${fileBase}` : fileBase;
+      break;
+    }
+  }
+  return normalized || "output/duxiu_books";
 }
 
 function baseOutputFromCurrentValue() {
   const current = ($("output")?.value || keywordQueue.baseOutput || "output/duxiu_books").trim();
   const activeItem = keywordQueue.items[keywordQueue.activeIndex];
-  if (!activeItem) return current || "output/duxiu_books";
-  const suffix = `_${sanitizeOutputSuffix(activeItem.keyword, keywordQueue.activeIndex)}`;
-  return current.endsWith(suffix) ? current.slice(0, -suffix.length) : current;
+  if (!activeItem) return stripGeneratedKeywordOutput(current);
+  const currentNormalized = current.replace(/\/+$/g, "");
+  const expected = outputForKeyword(keywordQueue.baseOutput, activeItem.keyword, keywordQueue.activeIndex);
+  if (currentNormalized === expected) return keywordQueue.baseOutput || "output/duxiu_books";
+  return stripGeneratedKeywordOutput(currentNormalized);
 }
 
 function setQueueItemStatus(index, status) {
@@ -284,6 +321,7 @@ function applyKeywordItem(index) {
 function renderKeywordQueue() {
   const badge = $("queueBadge");
   const status = $("keywordQueueStatus");
+  const outputPreview = $("keywordOutputPreview");
   const list = $("keywordQueueList");
   const nextBtn = $("keywordNextBtn");
   const continuous = $("keywordContinuous");
@@ -314,6 +352,14 @@ function renderKeywordQueue() {
       status.textContent = `关键词队列已导入 ${total} 个。`;
     }
   }
+  if (outputPreview) {
+    if (activeItem) {
+      outputPreview.textContent = `当前输出目录：${outputFolderForKeyword(keywordQueue.baseOutput, activeItem.keyword, keywordQueue.activeIndex)}`;
+      outputPreview.classList.remove("hidden");
+    } else {
+      outputPreview.classList.add("hidden");
+    }
+  }
   if (!list) return;
   list.innerHTML = keywordQueue.items
     .map((item, index) => {
@@ -336,7 +382,7 @@ function importKeywordQueue() {
     showAlert("请先上传或粘贴关键词列表。");
     return;
   }
-  const output = readConfig().output || "output/duxiu_books";
+  const output = stripGeneratedKeywordOutput(readConfig().output || "output/duxiu_books", items);
   keywordQueue = {
     ...emptyKeywordQueue(),
     items,

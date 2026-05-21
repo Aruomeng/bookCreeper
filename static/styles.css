@@ -547,6 +547,19 @@ summary {
   line-height: 1.5;
 }
 
+.queue-output-preview {
+  min-width: 0;
+  padding: 9px 10px;
+  border: 1px dashed rgba(15, 118, 110, 0.28);
+  border-radius: 10px;
+  background: rgba(15, 118, 110, 0.07);
+  color: #0f766e;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.45;
+  word-break: break-all;
+}
+
 .queue-badge {
   flex: 0 0 auto;
   display: inline-flex;
